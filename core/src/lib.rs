@@ -3,18 +3,63 @@ pub mod models;
 pub mod utils;
 
 use crate::{constants::*, models::ApiRequest};
-use reqwest::cookie::{CookieStore, Jar};
+use reqwest::cookie::Jar;
 use std::sync::Arc;
 use url::Url;
 
-#[derive(Clone)]
-pub struct Client {
-    client: reqwest::Client,
-    cookie_store: Arc<Jar>,
-    auth_base_url: Url,
+/// Marker for a client without an authenticated session.
+#[derive(Debug)]
+pub struct Unauthenticated;
+
+/// Marker for a client with an authenticated session.
+#[derive(Debug)]
+pub struct Authenticated {
+    user: models::AuthenticatedUser,
 }
 
-impl Client {
+/// Client returned by [`Client::new`] and [`AuthenticatedClient::logout`].
+///
+/// It cannot call authenticated-only methods:
+///
+/// ```compile_fail
+/// use streamable::UnauthenticatedClient;
+///
+/// fn requires_authentication(client: UnauthenticatedClient) {
+///     client.user();
+/// }
+/// ```
+pub type UnauthenticatedClient = Client<Unauthenticated>;
+
+/// Client returned by [`UnauthenticatedClient::register`] and
+/// [`UnauthenticatedClient::login`].
+///
+/// It must call [`AuthenticatedClient::logout`] before authenticating again:
+///
+/// ```compile_fail
+/// use streamable::AuthenticatedClient;
+///
+/// async fn login_again(client: AuthenticatedClient) {
+///     client.login("user@example.com".into(), "password".into()).await;
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use streamable::AuthenticatedClient;
+///
+/// async fn register_again(client: AuthenticatedClient) {
+///     client.register(None, None, None).await;
+/// }
+/// ```
+pub type AuthenticatedClient = Client<Authenticated>;
+
+/// Streamable API client whose available methods depend on its authentication state.
+pub struct Client<State = Unauthenticated> {
+    client: reqwest::Client,
+    auth_base_url: Url,
+    state: State,
+}
+
+impl Client<Unauthenticated> {
     pub fn new() -> Result<Self, reqwest::Error> {
         Self::with_auth_base_url(Url::parse(AUTH_BASE_URL).expect("valid auth base URL"))
     }
@@ -29,11 +74,74 @@ impl Client {
 
         Ok(Self {
             client,
-            cookie_store,
             auth_base_url,
+            state: Unauthenticated,
         })
     }
 
+    /// Checks whether the client has an authenticated session.
+    pub fn is_authenticated(&self) -> bool {
+        false
+    }
+
+    pub async fn register(
+        self,
+        email: Option<String>,
+        password: Option<String>,
+        username: Option<String>,
+    ) -> Result<AuthenticatedClient, reqwest::Error> {
+        let email = email.unwrap_or_else(utils::generate_random_username);
+        let password = password.unwrap_or_else(utils::generate_random_password);
+        let username = username.unwrap_or_else(|| email.clone());
+
+        let request = models::CreateUserRequest {
+            email,
+            password,
+            username,
+        };
+        let user = self.execute(&request).await?;
+
+        Ok(self.into_authenticated(user))
+    }
+
+    pub async fn login(
+        self,
+        email: String,
+        password: String,
+    ) -> Result<AuthenticatedClient, reqwest::Error> {
+        let request = models::LoginRequest::new(email, password);
+        let user = self.execute(&request).await?;
+
+        Ok(self.into_authenticated(user))
+    }
+
+    fn into_authenticated(self, user: models::AuthenticatedUser) -> AuthenticatedClient {
+        Client {
+            client: self.client,
+            auth_base_url: self.auth_base_url,
+            state: Authenticated { user },
+        }
+    }
+}
+
+impl Client<Authenticated> {
+    /// Returns user data received when this client authenticated.
+    pub fn user(&self) -> &models::AuthenticatedUser {
+        &self.state.user
+    }
+
+    /// Checks whether the client has an authenticated session.
+    pub fn is_authenticated(&self) -> bool {
+        true
+    }
+
+    /// Drops every session cookie by replacing the underlying HTTP client and cookie jar.
+    pub fn logout(self) -> Result<UnauthenticatedClient, reqwest::Error> {
+        Client::with_auth_base_url(self.auth_base_url)
+    }
+}
+
+impl<State> Client<State> {
     async fn execute<R>(&self, req: &R) -> Result<R::Response, reqwest::Error>
     where
         R: ApiRequest,
@@ -52,55 +160,6 @@ impl Client {
             .json::<R::Response>()
             .await
     }
-
-    fn has_cookie(&self, url: &Url, cookie_name: &str) -> bool {
-        self.cookie_store
-            .cookies(url)
-            .and_then(|header| header.to_str().ok().map(|s| s.to_string()))
-            .map(|cookies_str| {
-                // Parse the "key=value; key2=value2" header format
-                cookies_str.split(';').any(|pair| {
-                    let mut parts = pair.split('=');
-                    match (parts.next(), parts.next()) {
-                        (Some(key), _) => key.trim() == cookie_name,
-                        _ => false,
-                    }
-                })
-            })
-            .unwrap_or(false)
-    }
-
-    /// Checks if the client has a valid `session` cookie, indicating an authenticated user
-    pub fn is_authenticated(&self) -> bool {
-        self.has_cookie(&self.auth_base_url, "session")
-    }
-
-    pub async fn register(
-        &self,
-        email: Option<String>,
-        password: Option<String>,
-        username: Option<String>,
-    ) -> Result<models::AuthenticatedUser, reqwest::Error> {
-        let email = email.unwrap_or_else(utils::generate_random_username);
-        let password = password.unwrap_or_else(utils::generate_random_password);
-        let username = username.unwrap_or_else(|| email.clone());
-
-        let request = models::CreateUserRequest {
-            email,
-            password,
-            username,
-        };
-        self.execute(&request).await
-    }
-
-    pub async fn login(
-        &self,
-        email: String,
-        password: String,
-    ) -> Result<models::AuthenticatedUser, reqwest::Error> {
-        let request = models::LoginRequest::new(email, password);
-        self.execute(&request).await
-    }
 }
 
 #[cfg(test)]
@@ -112,9 +171,19 @@ mod tests {
     use serde_json::json;
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     use wiremock::{
-        Mock, MockServer, ResponseTemplate,
+        Match, Mock, MockServer, Request, ResponseTemplate,
         matchers::{body_json, method, path},
     };
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    struct NoCookieHeader;
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    impl Match for NoCookieHeader {
+        fn matches(&self, request: &Request) -> bool {
+            !request.headers.contains_key("cookie")
+        }
+    }
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     fn authenticated_user(email: &str) -> serde_json::Value {
@@ -179,6 +248,7 @@ mod tests {
     async fn mock_login(server: &MockServer, email: &str, password: &str) {
         Mock::given(method("POST"))
             .and(path("/check"))
+            .and(NoCookieHeader)
             .and(body_json(json!({
                 "username": email,
                 "password": password
@@ -195,8 +265,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_client_initialization() {
-        let client = Client::new();
-        assert!(client.is_ok());
+        let client = Client::new().expect("client should initialize");
+
+        assert!(!client.is_authenticated());
     }
 
     #[tokio::test]
@@ -213,9 +284,9 @@ mod tests {
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
 
-        let response = client.register(None, None, None).await?;
+        let client = client.register(None, None, None).await?;
 
-        assert!(!response.email.is_empty());
+        assert!(!client.user().email.is_empty());
         assert!(client.is_authenticated());
 
         Ok(())
@@ -241,23 +312,21 @@ mod tests {
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let registration_client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
 
-        let registered_user = registration_client
+        let registered_client = registration_client
             .register(Some(email.clone()), Some(password.clone()), None)
             .await?;
 
-        assert_eq!(registered_user.email, email);
-        assert!(registration_client.is_authenticated());
+        assert_eq!(registered_client.user().email, email);
+        assert!(registered_client.is_authenticated());
 
-        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let login_client = Client::new()?;
+        let login_client = registered_client.logout()?;
 
-        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-        let login_client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
+        assert!(!login_client.is_authenticated());
 
-        let logged_in_user = login_client.login(email.clone(), password).await?;
+        let logged_in_client = login_client.login(email.clone(), password).await?;
 
-        assert_eq!(logged_in_user.email, email);
-        assert!(login_client.is_authenticated());
+        assert_eq!(logged_in_client.user().email, email);
+        assert!(logged_in_client.is_authenticated());
 
         Ok(())
     }
