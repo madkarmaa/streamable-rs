@@ -3,8 +3,6 @@ pub mod models;
 pub mod utils;
 
 use crate::{constants::*, models::ApiRequest};
-use reqwest::cookie::Jar;
-use std::sync::Arc;
 use url::Url;
 
 /// Marker for a client without an authenticated session.
@@ -41,10 +39,6 @@ pub type UnauthenticatedClient = Client<Unauthenticated>;
 /// async fn login_again(client: AuthenticatedClient) {
 ///     client.login("user@example.com".into(), "password".into()).await;
 /// }
-/// ```
-///
-/// ```compile_fail
-/// use streamable::AuthenticatedClient;
 ///
 /// async fn register_again(client: AuthenticatedClient) {
 ///     client.register(None, None, None).await;
@@ -52,7 +46,7 @@ pub type UnauthenticatedClient = Client<Unauthenticated>;
 /// ```
 pub type AuthenticatedClient = Client<Authenticated>;
 
-/// Streamable API client whose available methods depend on its authentication state.
+/// Streamable API client.
 pub struct Client<State = Unauthenticated> {
     client: reqwest::Client,
     auth_base_url: Url,
@@ -65,12 +59,7 @@ impl Client<Unauthenticated> {
     }
 
     fn with_auth_base_url(auth_base_url: Url) -> Result<Self, reqwest::Error> {
-        let cookie_store = Arc::new(Jar::default());
-
-        // cookie_store must be enabled to allow for session persistence across requests
-        let client = reqwest::Client::builder()
-            .cookie_provider(Arc::clone(&cookie_store))
-            .build()?;
+        let client = reqwest::Client::builder().cookie_store(true).build()?;
 
         Ok(Self {
             client,
@@ -84,6 +73,15 @@ impl Client<Unauthenticated> {
         false
     }
 
+    /// Registers a new user.
+    ///
+    /// If `email`, `password`, or `username` are not provided, they will be randomly generated.
+    ///
+    /// Only email+password registration **IS** supported.
+    ///
+    /// Google OAuth registration is **NOT** supported.
+    ///
+    /// Facebook registration is **NOT** supported.
     pub async fn register(
         self,
         email: Option<String>,
@@ -94,16 +92,19 @@ impl Client<Unauthenticated> {
         let password = password.unwrap_or_else(utils::generate_random_password);
         let username = username.unwrap_or_else(|| email.clone());
 
-        let request = models::CreateUserRequest {
-            email,
-            password,
-            username,
-        };
+        let request = models::CreateUserRequest::new(email, password, username);
         let user = self.execute(&request).await?;
 
         Ok(self.into_authenticated(user))
     }
 
+    /// Logs in an existing user.
+    ///
+    /// Only email+password login **IS** supported.
+    ///
+    /// Google OAuth login is **NOT** supported.
+    ///
+    /// Facebook login is **NOT** supported.
     pub async fn login(
         self,
         email: String,
@@ -125,7 +126,7 @@ impl Client<Unauthenticated> {
 }
 
 impl Client<Authenticated> {
-    /// Returns user data received when this client authenticated.
+    /// The currently authenticated user's data.
     pub fn user(&self) -> &models::AuthenticatedUser {
         &self.state.user
     }
@@ -135,7 +136,7 @@ impl Client<Authenticated> {
         true
     }
 
-    /// Drops every session cookie by replacing the underlying HTTP client and cookie jar.
+    /// Logs out the currently authenticated user.
     pub fn logout(self) -> Result<UnauthenticatedClient, reqwest::Error> {
         Client::with_auth_base_url(self.auth_base_url)
     }

@@ -16,6 +16,16 @@ pub struct CreateUserRequest {
     pub username: String,
 }
 
+impl CreateUserRequest {
+    pub fn new(email: String, password: String, username: String) -> Self {
+        Self {
+            email,
+            password,
+            username,
+        }
+    }
+}
+
 impl Serialize for CreateUserRequest {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
