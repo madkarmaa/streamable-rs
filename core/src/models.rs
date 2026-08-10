@@ -1,12 +1,49 @@
 use crate::constants::*;
-use serde::{Deserialize, Serialize, de::DeserializeOwned, ser::SerializeStruct};
+use crate::{
+    errors::{Result as StreamableResult, StreamableError},
+    response::ApiResponse,
+};
+use reqwest::StatusCode;
+use serde::{Deserialize, Serialize, ser::SerializeStruct};
 
 pub trait ApiRequest: Serialize {
     /// The specific response model expected from this request
-    type Response: DeserializeOwned;
+    type Response;
 
     fn url(&self) -> &'static str;
     fn method(&self) -> reqwest::Method;
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response>;
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct ErrorResponse {
+    pub error: String,
+    pub message: String,
+}
+
+fn common_api_error(response: &ApiResponse) -> Option<StreamableError> {
+    if response.status() == StatusCode::TOO_MANY_REQUESTS {
+        return Some(StreamableError::RateLimitExceeded {
+            endpoint: response.endpoint().to_string(),
+        });
+    }
+
+    let api_error = response.api_error();
+    if response.status() == StatusCode::UNAUTHORIZED
+        || response.status() == StatusCode::FORBIDDEN
+        || api_error
+            .as_ref()
+            .is_some_and(|error| error.error == "InvalidSessionError")
+    {
+        let message = api_error
+            .map(|error| error.message)
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| "Session is missing or expired.".to_string());
+
+        return Some(StreamableError::InvalidSession { message });
+    }
+
+    None
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -53,6 +90,33 @@ impl ApiRequest for CreateUserRequest {
     fn method(&self) -> reqwest::Method {
         reqwest::Method::POST
     }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if response.status() == StatusCode::BAD_REQUEST
+            && response.text().contains("Email already in use")
+        {
+            return Err(StreamableError::EmailAlreadyInUse {
+                message: response.text().into_owned(),
+            });
+        }
+
+        if let Some(error) = response.api_error()
+            && matches!(
+                error.error.as_str(),
+                "ValidationError" | "PasswordValidationError"
+            )
+        {
+            return Err(StreamableError::PasswordValidation {
+                message: error.message,
+            });
+        }
+
+        response.json()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +143,23 @@ impl ApiRequest for LoginRequest {
 
     fn method(&self) -> reqwest::Method {
         reqwest::Method::POST
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if let Some(error) = response.api_error()
+            && error.error == "AuthError"
+            && error.message.contains("Invalid username or password")
+        {
+            return Err(StreamableError::InvalidCredentials {
+                message: error.message,
+            });
+        }
+
+        response.json()
     }
 }
 

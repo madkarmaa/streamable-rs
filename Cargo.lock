@@ -1382,6 +1382,7 @@ name = "streamable-rs"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "bytes",
  "rand",
  "reqwest",
  "serde",

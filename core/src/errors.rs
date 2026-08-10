@@ -1,0 +1,53 @@
+use thiserror::Error;
+
+/// Errors returned by the Streamable API client.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum StreamableError {
+    /// Signup failed because the email is already registered.
+    #[error("{message}")]
+    EmailAlreadyInUse { message: String },
+
+    /// Login failed because the email or password is incorrect.
+    #[error("{message}")]
+    InvalidCredentials { message: String },
+
+    /// An authenticated operation failed because the session is missing or expired.
+    #[error("{message}")]
+    InvalidSession { message: String },
+
+    /// Password validation failed.
+    #[error("{message}")]
+    PasswordValidation { message: String },
+
+    /// Streamable rejected the request because the endpoint rate limit was exceeded.
+    #[error("Rate limit exceeded for {endpoint}. Try again later.")]
+    RateLimitExceeded { endpoint: String },
+
+    /// The HTTP request failed.
+    #[error(transparent)]
+    Request(#[from] reqwest::Error),
+
+    /// The API response body did not match the expected model.
+    #[error(transparent)]
+    ResponseDecode(#[from] serde_json::Error),
+}
+
+pub type Result<T> = std::result::Result<T, StreamableError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_limit_error_message_matches() {
+        let error = StreamableError::RateLimitExceeded {
+            endpoint: "https://ajax.streamable.com/check".to_string(),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "Rate limit exceeded for https://ajax.streamable.com/check. Try again later."
+        );
+    }
+}
