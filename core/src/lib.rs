@@ -182,6 +182,9 @@ mod tests {
         matchers::{method, path},
     };
 
+    #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+    static REMOTE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     struct NoCookieHeader;
 
@@ -311,6 +314,9 @@ mod tests {
     #[tokio::test]
     async fn test_successful_random_registration() -> anyhow::Result<()> {
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let client = Client::new()?;
 
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -332,6 +338,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_successful_registration_and_login() -> anyhow::Result<()> {
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+
         let email = generate_random_username();
         let password = generate_random_password();
 
@@ -371,6 +380,9 @@ mod tests {
 
     #[tokio::test]
     async fn registration_reports_email_already_in_use() -> anyhow::Result<()> {
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let email = generate_random_username();
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
@@ -414,6 +426,9 @@ mod tests {
 
     #[tokio::test]
     async fn login_reports_invalid_credentials() -> anyhow::Result<()> {
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let client = Client::new()?;
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
@@ -486,6 +501,9 @@ mod tests {
 
     #[tokio::test]
     async fn registration_reports_password_validation() -> anyhow::Result<()> {
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let client = Client::new()?;
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
