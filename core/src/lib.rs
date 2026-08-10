@@ -8,13 +8,18 @@ use std::sync::Arc;
 use url::Url;
 
 #[derive(Clone)]
-pub struct StreamableClient {
+pub struct Client {
     client: reqwest::Client,
     cookie_store: Arc<Jar>,
+    auth_base_url: Url,
 }
 
-impl StreamableClient {
+impl Client {
     pub fn new() -> Result<Self, reqwest::Error> {
+        Self::with_auth_base_url(Url::parse(AUTH_BASE_URL).expect("valid auth base URL"))
+    }
+
+    fn with_auth_base_url(auth_base_url: Url) -> Result<Self, reqwest::Error> {
         let cookie_store = Arc::new(Jar::default());
 
         // cookie_store must be enabled to allow for session persistence across requests
@@ -25,6 +30,7 @@ impl StreamableClient {
         Ok(Self {
             client,
             cookie_store,
+            auth_base_url,
         })
     }
 
@@ -32,8 +38,13 @@ impl StreamableClient {
     where
         R: ApiRequest,
     {
+        let request_url = Url::parse(req.url()).expect("API request URL must be valid");
+        let mut endpoint_url = self.auth_base_url.clone();
+        endpoint_url.set_path(request_url.path());
+        endpoint_url.set_query(request_url.query());
+
         self.client
-            .request(req.method(), req.url())
+            .request(req.method(), endpoint_url)
             .json(req)
             .send()
             .await?
@@ -61,8 +72,7 @@ impl StreamableClient {
 
     /// Checks if the client has a valid `session` cookie, indicating an authenticated user
     pub fn is_authenticated(&self) -> bool {
-        let url = Url::parse(AUTH_BASE_URL).expect("valid URL");
-        self.has_cookie(&url, "session")
+        self.has_cookie(&self.auth_base_url, "session")
     }
 
     pub async fn register(
@@ -94,22 +104,115 @@ impl StreamableClient {
 }
 
 #[cfg(test)]
-#[allow(unused_imports)]
 mod tests {
     use super::*;
-    use crate::models::*;
     use crate::utils::*;
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    use serde_json::json;
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{body_json, method, path},
+    };
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    fn authenticated_user(email: &str) -> serde_json::Value {
+        json!({
+            "socket": "mock-socket",
+            "total_plays": 0,
+            "total_uploads": 0,
+            "id": 1,
+            "user_name": email,
+            "email": email,
+            "date_added": 0.0,
+            "color": "#000000",
+            "bio": "",
+            "restricted": false,
+            "plan_name": "free",
+            "plan_max_length": 600,
+            "plan_max_size": 250.0,
+            "privacy_settings": {
+                "allow_download": true,
+                "allow_sharing": true,
+                "hide_view_count": false,
+                "visibility": "public"
+            }
+        })
+    }
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    async fn mock_registration(server: &MockServer, email: &str) {
+        Mock::given(method("POST"))
+            .and(path("/users"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("set-cookie", "session=mock-session; Path=/; HttpOnly")
+                    .set_body_json(authenticated_user(email)),
+            )
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    async fn mock_registration_with_credentials(server: &MockServer, email: &str, password: &str) {
+        Mock::given(method("POST"))
+            .and(path("/users"))
+            .and(body_json(json!({
+                "email": email,
+                "password": password,
+                "username": email,
+                "verification_redirect": "https://streamable.com?alert=verified"
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("set-cookie", "session=mock-session; Path=/; HttpOnly")
+                    .set_body_json(authenticated_user(email)),
+            )
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    async fn mock_login(server: &MockServer, email: &str, password: &str) {
+        Mock::given(method("POST"))
+            .and(path("/check"))
+            .and(body_json(json!({
+                "username": email,
+                "password": password
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("set-cookie", "session=mock-session; Path=/; HttpOnly")
+                    .set_body_json(authenticated_user(email)),
+            )
+            .expect(1)
+            .mount(server)
+            .await;
+    }
 
     #[tokio::test]
     async fn test_api_client_initialization() {
-        let client = StreamableClient::new();
+        let client = Client::new();
         assert!(client.is_ok());
     }
 
-    #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     #[tokio::test]
     async fn test_successful_random_registration() -> anyhow::Result<()> {
-        let client = StreamableClient::new()?;
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let client = Client::new()?;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        let mock_server = MockServer::start().await;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        mock_registration(&mock_server, "generated-user@example.com").await;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        let client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
+
         let response = client.register(None, None, None).await?;
 
         assert!(!response.email.is_empty());
@@ -118,12 +221,25 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     #[tokio::test]
     async fn test_successful_registration_and_login() -> anyhow::Result<()> {
         let email = generate_random_username();
         let password = generate_random_password();
-        let registration_client = StreamableClient::new()?;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        let mock_server = MockServer::start().await;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        mock_registration_with_credentials(&mock_server, &email, &password).await;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        mock_login(&mock_server, &email, &password).await;
+
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let registration_client = Client::new()?;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        let registration_client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
 
         let registered_user = registration_client
             .register(Some(email.clone()), Some(password.clone()), None)
@@ -132,7 +248,12 @@ mod tests {
         assert_eq!(registered_user.email, email);
         assert!(registration_client.is_authenticated());
 
-        let login_client = StreamableClient::new()?;
+        #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+        let login_client = Client::new()?;
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        let login_client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
+
         let logged_in_user = login_client.login(email.clone(), password).await?;
 
         assert_eq!(logged_in_user.email, email);
