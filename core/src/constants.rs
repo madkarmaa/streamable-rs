@@ -1,5 +1,6 @@
 pub const AUTH_BASE_URL: &str = "https://ajax.streamable.com";
 pub const CREATE_USER_URL: &str = "https://ajax.streamable.com/users";
+pub const LOGIN_URL: &str = "https://ajax.streamable.com/check";
 
 pub const EMAIL_DOMAINS: &[&str] = &[
     "gmail.com",

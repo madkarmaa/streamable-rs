@@ -46,6 +46,33 @@ impl ApiRequest for CreateUserRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+impl LoginRequest {
+    pub fn new(email: String, password: String) -> Self {
+        Self {
+            username: email,
+            password,
+        }
+    }
+}
+
+impl ApiRequest for LoginRequest {
+    type Response = AuthenticatedUser;
+
+    fn url(&self) -> &'static str {
+        LOGIN_URL
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::POST
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnauthenticatedUser {
     pub socket: String,
     pub total_plays: u32,
