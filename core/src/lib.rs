@@ -494,14 +494,14 @@ mod tests {
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let mock_server = MockServer::start().await;
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-        mock_json_error(
-            &mock_server,
-            "/users",
-            400,
-            "ValidationError",
-            "Password does not meet requirements",
-        )
-        .await;
+        Mock::given(method("POST"))
+            .and(path("/users"))
+            .respond_with(ResponseTemplate::new(400).set_body_string(
+                "Password must be at least 8 characters, and contain at least one uppercase letter (A-Z), one lowercase letter (a-z), and one number (0-9).",
+            ))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let client = mock_client(&mock_server)?;
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -514,10 +514,11 @@ mod tests {
             "registration should fail",
         );
 
-        assert!(matches!(&error, StreamableError::PasswordValidation { .. }));
-
-        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-        assert_eq!(error.to_string(), "Password does not meet requirements");
+        assert!(matches!(
+            &error,
+            StreamableError::PasswordValidation { message }
+                if message.starts_with("Password must ")
+        ));
 
         Ok(())
     }

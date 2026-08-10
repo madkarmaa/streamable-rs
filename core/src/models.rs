@@ -104,14 +104,11 @@ impl ApiRequest for CreateUserRequest {
             });
         }
 
-        if let Some(error) = response.api_error()
-            && matches!(
-                error.error.as_str(),
-                "ValidationError" | "PasswordValidationError"
-            )
+        if response.status() == StatusCode::BAD_REQUEST
+            && response.text().starts_with("Password must ")
         {
             return Err(StreamableError::PasswordValidation {
-                message: error.message,
+                message: response.text().into_owned(),
             });
         }
 
