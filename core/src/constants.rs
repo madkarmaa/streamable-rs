@@ -1,6 +1,12 @@
-pub const AUTH_BASE_URL: &str = "https://ajax.streamable.com";
-pub const CREATE_USER_URL: &str = "https://ajax.streamable.com/users";
-pub const LOGIN_URL: &str = "https://ajax.streamable.com/check";
+macro_rules! auth_base {
+    () => {
+        "https://ajax.streamable.com"
+    };
+}
+
+pub const AUTH_BASE_URL: &str = auth_base!();
+pub const CREATE_USER_URL: &str = concat!(auth_base!(), "/users");
+pub const LOGIN_URL: &str = concat!(auth_base!(), "/check");
 
 pub const EMAIL_DOMAINS: &[&str] = &[
     "gmail.com",
