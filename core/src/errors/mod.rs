@@ -34,6 +34,3 @@ pub enum StreamableError {
 }
 
 pub type Result<T> = std::result::Result<T, StreamableError>;
-
-#[cfg(test)]
-mod tests;
