@@ -552,6 +552,81 @@ async fn delete_label_reports_missing_id() {
     ));
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn rename_label_patches_trimmed_name_and_returns_label() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/labels/174172"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "name": "renamed" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": 174_172,
+            "name": "renamed"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let label = client
+        .rename_label(174_172, "  renamed  ")
+        .await
+        .expect("label rename should succeed");
+
+    assert_eq!(
+        label,
+        models::Label {
+            id: 174_172,
+            name: "renamed".to_string()
+        }
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn rename_label_reports_missing_id() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/labels/696969"))
+        .and(body_json(json!({ "name": "renamed" })))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "statusCode": 404,
+            "error": "Not Found",
+            "message": "Not Found"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let error = expect_streamable_error(
+        client.rename_label(696_969, "renamed").await,
+        "missing label rename should fail",
+    );
+
+    assert!(matches!(
+        error,
+        StreamableError::LabelNotFound { id: 696_969 }
+    ));
+}
+
 #[tokio::test]
 async fn privacy_settings_update_omits_none_fields_and_refreshes_user() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]

@@ -1,4 +1,7 @@
-use super::{ChangePasswordRequest, CreateLabelRequest, PrivacySettingsRequest, Visibility};
+use super::{
+    ChangePasswordRequest, CreateLabelRequest, PrivacySettingsRequest, RenameLabelRequest,
+    Visibility,
+};
 
 #[test]
 fn visibility_serializes_as_lowercase_strings() {
@@ -43,5 +46,15 @@ fn create_label_request_trims_and_serializes_name() {
     assert_eq!(
         serde_json::to_value(request).expect("create label request should serialize"),
         serde_json::json!({ "name": "important" })
+    );
+}
+
+#[test]
+fn rename_label_request_trims_and_serializes_only_name() {
+    let request = RenameLabelRequest::new(174_172, "  renamed  ");
+
+    assert_eq!(
+        serde_json::to_value(request).expect("rename label request should serialize"),
+        serde_json::json!({ "name": "renamed" })
     );
 }

@@ -319,6 +319,50 @@ impl ApiRequest for DeleteLabelRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct RenameLabelRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    id: u64,
+    pub name: String,
+}
+
+impl RenameLabelRequest {
+    #[must_use]
+    pub fn new(id: u64, name: &str) -> Self {
+        Self {
+            url: format!("{LABELS_URL}/{id}"),
+            id,
+            name: name.trim().to_string(),
+        }
+    }
+}
+
+impl ApiRequest for RenameLabelRequest {
+    type Response = Label;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::PATCH
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if response.status() == StatusCode::NOT_FOUND {
+            return Err(StreamableError::LabelNotFound { id: self.id });
+        }
+
+        response.json()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UnauthenticatedUser {
     pub socket: String,

@@ -222,6 +222,19 @@ impl StreamableClient<Authenticated> {
         self.execute(&models::DeleteLabelRequest::new(id)).await
     }
 
+    /// Renames a label belonging to the authenticated user.
+    ///
+    /// Leading and trailing whitespace is removed from `new_name` before sending it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is invalid, the label does not exist, the name is
+    /// rejected, or the request fails.
+    pub async fn rename_label(&self, id: u64, new_name: &str) -> Result<models::Label> {
+        self.execute(&models::RenameLabelRequest::new(id, new_name))
+            .await
+    }
+
     /// Logs out the currently authenticated user.
     ///
     /// # Errors
