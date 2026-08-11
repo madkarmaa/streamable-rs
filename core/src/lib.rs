@@ -77,7 +77,7 @@ impl Client<Unauthenticated> {
         false
     }
 
-    /// Registers a new user.
+    /// Registers a new user and returns the authenticated client, email, and password.
     ///
     /// If `email`, `password`, or `username` are not provided, they will be randomly generated.
     ///
@@ -91,15 +91,15 @@ impl Client<Unauthenticated> {
         email: Option<String>,
         password: Option<String>,
         username: Option<String>,
-    ) -> Result<AuthenticatedClient> {
+    ) -> Result<(AuthenticatedClient, String, String)> {
         let email = email.unwrap_or_else(utils::generate_random_username);
         let password = password.unwrap_or_else(utils::generate_random_password);
         let username = username.unwrap_or_else(|| email.clone());
 
-        let request = models::CreateUserRequest::new(email, password, username);
+        let request = models::CreateUserRequest::new(email.clone(), password.clone(), username);
         let user = self.execute(&request).await?;
 
-        Ok(self.into_authenticated(user))
+        Ok((self.into_authenticated(user), email, password))
     }
 
     /// Logs in an existing user.
@@ -328,10 +328,24 @@ mod tests {
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
 
-        let client = client.register(None, None, None).await?;
+        let (client, email, password) = client.register(None, None, None).await?;
 
-        assert!(!client.user().email.is_empty());
+        assert!(!email.is_empty());
+        assert!(!password.is_empty());
         assert!(client.is_authenticated());
+
+        #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+        {
+            let requests = mock_server
+                .received_requests()
+                .await
+                .expect("mock server should record requests");
+            let body: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+
+            assert_eq!(body["email"], email);
+            assert_eq!(body["password"], password);
+            assert_eq!(body["username"], email);
+        }
 
         Ok(())
     }
@@ -359,10 +373,12 @@ mod tests {
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let registration_client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
 
-        let registered_client = registration_client
+        let (registered_client, returned_email, returned_password) = registration_client
             .register(Some(email.clone()), Some(password.clone()), None)
             .await?;
 
+        assert_eq!(returned_email, email);
+        assert_eq!(returned_password, password);
         assert_eq!(registered_client.user().email, email);
         assert!(registered_client.is_authenticated());
 
@@ -370,7 +386,9 @@ mod tests {
 
         assert!(!login_client.is_authenticated());
 
-        let logged_in_client = login_client.login(email.clone(), password).await?;
+        let logged_in_client = login_client
+            .login(returned_email, returned_password)
+            .await?;
 
         assert_eq!(logged_in_client.user().email, email);
         assert!(logged_in_client.is_authenticated());
@@ -388,7 +406,7 @@ mod tests {
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let password = generate_random_password();
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let _registered_client = Client::new()?
+        let (_registered_client, _, _) = Client::new()?
             .register(Some(email.clone()), Some(password.clone()), None)
             .await?;
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
