@@ -50,6 +50,15 @@ fn authenticated_user(email: &str) -> serde_json::Value {
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn unauthenticated_user(socket: &str, total_plays: u32, total_uploads: u32) -> serde_json::Value {
+    json!({
+        "socket": socket,
+        "total_plays": total_plays,
+        "total_uploads": total_uploads
+    })
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 async fn mock_registration(server: &MockServer, email: &str) {
     Mock::given(method("POST"))
         .and(path("/users"))
@@ -138,6 +147,7 @@ async fn test_api_client_initialization() {
     let client = StreamableClient::new().expect("client should initialize");
 
     assert!(!client.is_authenticated());
+    assert_eq!(client.user(), None);
 }
 
 #[test]
@@ -150,6 +160,109 @@ fn configured_base_urls_are_stored() {
 
     assert_eq!(client.auth_base_url, auth_base_url);
     assert_eq!(client.api_base_url, api_base_url);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn unauthenticated_client_refreshes_basic_user_data() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/me"))
+        .and(NoCookieHeader)
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(unauthenticated_user("anonymous", 12, 3)),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut client = mock_client(&mock_server).expect("mock client should initialize");
+    let expected_user = models::UnauthenticatedUser {
+        socket: "anonymous".to_string(),
+        total_plays: 12,
+        total_uploads: 3,
+    };
+    {
+        let user = client
+            .refresh_user()
+            .await
+            .expect("unauthenticated user refresh should succeed");
+        assert_eq!(user, &expected_user);
+    }
+    assert_eq!(client.user(), Some(&expected_user));
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    let me_request = requests
+        .iter()
+        .find(|request| request.method.as_str() == "GET")
+        .expect("me request should be recorded");
+    assert!(me_request.body.is_empty());
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn authenticated_client_refreshes_full_user_data() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+
+    let mut refreshed_user = authenticated_user(email);
+    refreshed_user["total_plays"] = json!(42);
+    refreshed_user["total_uploads"] = json!(7);
+    refreshed_user["bio"] = json!("refreshed");
+    Mock::given(method("GET"))
+        .and(path("/api/v1/me"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(refreshed_user))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (mut client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let user = client
+        .refresh_user()
+        .await
+        .expect("authenticated user refresh should succeed");
+
+    assert_eq!(user.unauthenticated.total_plays, 42);
+    assert_eq!(user.unauthenticated.total_uploads, 7);
+    assert_eq!(user.bio, "refreshed");
+    assert_eq!(client.user().bio, "refreshed");
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_me_refreshes_both_user_states() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let mut client = StreamableClient::new().expect("client should initialize");
+
+    assert!(client.user().is_none());
+    let unauthenticated_user = client
+        .refresh_user()
+        .await
+        .expect("remote unauthenticated user refresh should succeed");
+    assert!(!unauthenticated_user.socket.is_empty());
+    assert!(client.user().is_some());
+
+    let (mut client, _, _) = client
+        .register(None, None, None)
+        .await
+        .expect("remote registration should succeed");
+    let expected_email = client.user().email.clone();
+    let authenticated_user = client
+        .refresh_user()
+        .await
+        .expect("remote authenticated user refresh should succeed");
+
+    assert_eq!(authenticated_user.email, expected_email);
 }
 
 #[tokio::test]
@@ -625,6 +738,32 @@ async fn rename_label_reports_missing_id() {
         error,
         StreamableError::LabelNotFound { id: 696_969 }
     ));
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_label_lifecycle() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let (client, _, _) = StreamableClient::new()
+        .expect("client should initialize")
+        .register(None, None, None)
+        .await
+        .expect("remote registration should succeed");
+    let name = format!("label-{}", generate_random_password());
+    let renamed_name = format!("{name}-renamed");
+
+    let created = client
+        .create_label(&name)
+        .await
+        .expect("remote label creation should succeed");
+    let renamed_result = client.rename_label(created.id, &renamed_name).await;
+    let deleted_result = client.delete_label(created.id).await;
+
+    let renamed = renamed_result.expect("remote label rename should succeed");
+    deleted_result.expect("remote label cleanup should succeed");
+    assert_eq!(created.name, name);
+    assert_eq!(renamed.id, created.id);
+    assert_eq!(renamed.name, renamed_name);
 }
 
 #[tokio::test]

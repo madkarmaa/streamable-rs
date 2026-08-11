@@ -14,7 +14,9 @@ mod tests;
 
 /// Marker for a client without an authenticated session.
 #[derive(Debug)]
-pub struct Unauthenticated;
+pub struct Unauthenticated {
+    user: Option<models::UnauthenticatedUser>,
+}
 
 /// Marker for a client with an authenticated session.
 #[derive(Debug)]
@@ -25,15 +27,8 @@ pub struct Authenticated {
 /// Client returned by [`StreamableClient::new`] and
 /// [`AuthenticatedStreamableClient::logout`].
 ///
-/// It cannot call authenticated-only methods:
-///
-/// ```compile_fail
-/// use streamable::UnauthenticatedStreamableClient;
-///
-/// fn requires_authentication(client: UnauthenticatedStreamableClient) {
-///     client.user();
-/// }
-/// ```
+/// Its [`StreamableClient::user`] method exposes only the basic user data available without an
+/// authenticated session.
 pub type UnauthenticatedStreamableClient = StreamableClient<Unauthenticated>;
 
 /// Client returned by [`UnauthenticatedStreamableClient::register`] and
@@ -84,8 +79,26 @@ impl StreamableClient<Unauthenticated> {
             cookie_jar,
             auth_base_url,
             api_base_url,
-            state: Unauthenticated,
+            state: Unauthenticated { user: None },
         })
+    }
+
+    /// Basic user data previously fetched without an authenticated session.
+    ///
+    /// **NOTE**: the returned [`Option`] is `None` until [`UnauthenticatedStreamableClient::refresh_user`] is called.
+    #[must_use]
+    pub const fn user(&self) -> Option<&models::UnauthenticatedUser> {
+        self.state.user.as_ref()
+    }
+
+    /// Fetches current unauthenticated user data and stores it in this client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails or the response does not match the expected model.
+    pub async fn refresh_user(&mut self) -> Result<&models::UnauthenticatedUser> {
+        let user = self.execute(&models::MeRequest::new()).await?;
+        Ok(&*self.state.user.insert(user))
     }
 
     /// Checks whether the client has an authenticated session.
@@ -167,6 +180,17 @@ impl StreamableClient<Authenticated> {
     #[must_use]
     pub const fn is_authenticated(&self) -> bool {
         true
+    }
+
+    /// Fetches current authenticated user data and stores it in this client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is invalid, the request fails, or the response does not
+    /// match the expected model.
+    pub async fn refresh_user(&mut self) -> Result<&models::AuthenticatedUser> {
+        self.execute_and_update_user(&models::MeRequest::new())
+            .await
     }
 
     /// Changes the authenticated user's privacy settings.

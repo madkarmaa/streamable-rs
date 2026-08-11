@@ -1,10 +1,13 @@
-use crate::constants::{CHANGE_PASSWORD_URL, LABELS_URL, LOGIN_URL, REGISTER_URL, SETTINGS_URL};
+use crate::constants::{
+    CHANGE_PASSWORD_URL, LABELS_URL, LOGIN_URL, ME_URL, REGISTER_URL, SETTINGS_URL,
+};
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
 };
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize, ser::SerializeStruct};
+use serde::{Deserialize, Serialize, de::DeserializeOwned, ser::SerializeStruct};
+use std::marker::PhantomData;
 
 #[cfg(test)]
 mod tests;
@@ -58,6 +61,54 @@ fn common_api_error(response: &ApiResponse) -> Option<StreamableError> {
     }
 
     None
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MeRequest<Response> {
+    #[serde(skip)]
+    response: PhantomData<Response>,
+}
+
+impl<Response> MeRequest<Response> {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            response: PhantomData,
+        }
+    }
+}
+
+impl<Response> Default for MeRequest<Response> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Response> ApiRequest for MeRequest<Response>
+where
+    Response: DeserializeOwned,
+{
+    type Response = Response;
+
+    fn url(&self) -> &str {
+        ME_URL
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::GET
+    }
+
+    fn has_json_body(&self) -> bool {
+        false
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        response.json()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -363,7 +414,7 @@ impl ApiRequest for RenameLabelRequest {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnauthenticatedUser {
     pub socket: String,
     pub total_plays: u32,
