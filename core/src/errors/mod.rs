@@ -20,6 +20,10 @@ pub enum StreamableError {
     #[error("{message}")]
     PasswordValidation { message: String },
 
+    /// Label creation failed because the authenticated user already has a label with this name.
+    #[error("Label '{name}' already exists.")]
+    LabelAlreadyExists { name: String },
+
     /// Streamable rejected the request because the endpoint rate limit was exceeded.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded { endpoint: String },

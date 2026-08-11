@@ -200,6 +200,18 @@ impl StreamableClient<Authenticated> {
         self.execute(&request).await
     }
 
+    /// Creates a label for the authenticated user.
+    ///
+    /// Leading and trailing whitespace is removed from `name` before sending it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is invalid, the label already exists, the name is
+    /// rejected, or the request fails.
+    pub async fn create_label(&self, name: &str) -> Result<models::Label> {
+        self.execute(&models::CreateLabelRequest::new(name)).await
+    }
+
     /// Logs out the currently authenticated user.
     ///
     /// # Errors

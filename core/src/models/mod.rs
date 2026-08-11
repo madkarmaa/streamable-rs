@@ -1,4 +1,4 @@
-use crate::constants::{CHANGE_PASSWORD_URL, LOGIN_URL, REGISTER_URL, SETTINGS_URL};
+use crate::constants::{CHANGE_PASSWORD_URL, LABELS_URL, LOGIN_URL, REGISTER_URL, SETTINGS_URL};
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
@@ -222,6 +222,52 @@ impl ApiRequest for ChangePasswordRequest {
 
         response.into_empty()
     }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateLabelRequest {
+    pub name: String,
+}
+
+impl CreateLabelRequest {
+    #[must_use]
+    pub fn new(name: &str) -> Self {
+        Self {
+            name: name.trim().to_string(),
+        }
+    }
+}
+
+impl ApiRequest for CreateLabelRequest {
+    type Response = Label;
+
+    fn url(&self) -> &'static str {
+        LABELS_URL
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::POST
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if response.status() == StatusCode::CONFLICT {
+            return Err(StreamableError::LabelAlreadyExists {
+                name: self.name.clone(),
+            });
+        }
+
+        response.json()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Label {
+    pub name: String,
+    pub id: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

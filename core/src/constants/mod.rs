@@ -18,6 +18,7 @@ pub const CHANGE_PASSWORD_URL: &str = concat!(auth_base_url!(), "/me/change_pass
 pub const API_BASE_URL: &str = api_base_url!();
 pub const ME_URL: &str = concat!(api_base_url!(), "/me");
 pub const SETTINGS_URL: &str = concat!(api_base_url!(), "/me/settings");
+pub const LABELS_URL: &str = concat!(api_base_url!(), "/labels");
 
 pub const EMAIL_DOMAINS: &[&str] = &[
     "gmail.com",

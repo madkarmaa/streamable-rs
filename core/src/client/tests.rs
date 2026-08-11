@@ -409,6 +409,77 @@ async fn change_password_uses_session_cookie_and_changes_credentials() {
     mocked_change_password_flow().await;
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn create_label_posts_trimmed_name_and_returns_label() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "name": "important" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "name": "important",
+            "id": 174_172
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let label = client
+        .create_label("  important  ")
+        .await
+        .expect("label creation should succeed");
+
+    assert_eq!(
+        label,
+        models::Label {
+            name: "important".to_string(),
+            id: 174_172
+        }
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn create_label_reports_duplicate_name() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/labels"))
+        .and(body_json(json!({ "name": "important" })))
+        .respond_with(ResponseTemplate::new(409))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let error = expect_streamable_error(
+        client.create_label("important").await,
+        "duplicate label creation should fail",
+    );
+
+    assert!(matches!(
+        error,
+        StreamableError::LabelAlreadyExists { ref name } if name == "important"
+    ));
+}
+
 #[tokio::test]
 async fn privacy_settings_update_omits_none_fields_and_refreshes_user() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
