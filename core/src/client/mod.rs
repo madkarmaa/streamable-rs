@@ -1,5 +1,5 @@
 use crate::{
-    constants::*,
+    constants::{API_BASE_URL, AUTH_BASE_URL},
     errors::Result,
     models::{self, ApiRequest},
     response::ApiResponse,
@@ -58,11 +58,13 @@ pub struct StreamableClient<State = Unauthenticated> {
 }
 
 impl StreamableClient<Unauthenticated> {
+    /// Creates a client using the production authentication and API base URLs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a base URL is invalid or the HTTP client cannot be built.
     pub fn new() -> Result<Self> {
-        Self::with_base_urls(
-            Url::parse(AUTH_BASE_URL).expect("valid auth base URL"),
-            Url::parse(API_BASE_URL).expect("valid API base URL"),
-        )
+        Self::with_base_urls(Url::parse(AUTH_BASE_URL)?, Url::parse(API_BASE_URL)?)
     }
 
     fn with_base_urls(auth_base_url: Url, api_base_url: Url) -> Result<Self> {
@@ -77,7 +79,8 @@ impl StreamableClient<Unauthenticated> {
     }
 
     /// Checks whether the client has an authenticated session.
-    pub fn is_authenticated(&self) -> bool {
+    #[must_use]
+    pub const fn is_authenticated(&self) -> bool {
         false
     }
 
@@ -90,6 +93,10 @@ impl StreamableClient<Unauthenticated> {
     /// Google OAuth registration is **NOT** supported.
     ///
     /// Facebook registration is **NOT** supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails or Streamable rejects the registration.
     pub async fn register(
         self,
         email: Option<String>,
@@ -113,6 +120,10 @@ impl StreamableClient<Unauthenticated> {
     /// Google OAuth login is **NOT** supported.
     ///
     /// Facebook login is **NOT** supported.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails or Streamable rejects the credentials.
     pub async fn login(
         self,
         email: String,
@@ -136,27 +147,33 @@ impl StreamableClient<Unauthenticated> {
 
 impl StreamableClient<Authenticated> {
     /// The currently authenticated user's data.
-    pub fn user(&self) -> &models::AuthenticatedUser {
+    #[must_use]
+    pub const fn user(&self) -> &models::AuthenticatedUser {
         &self.state.user
     }
 
     /// Checks whether the client has an authenticated session.
-    pub fn is_authenticated(&self) -> bool {
+    #[must_use]
+    pub const fn is_authenticated(&self) -> bool {
         true
     }
 
     /// Logs out the currently authenticated user.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the replacement HTTP client cannot be built.
     pub fn logout(self) -> Result<UnauthenticatedStreamableClient> {
         StreamableClient::with_base_urls(self.auth_base_url, self.api_base_url)
     }
 }
 
-impl<State> StreamableClient<State> {
+impl<State: Sync> StreamableClient<State> {
     async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
     where
-        Req: ApiRequest,
+        Req: ApiRequest + Sync,
     {
-        let request_url = Url::parse(req.url()).expect("API request URL must be valid");
+        let request_url = Url::parse(req.url())?;
         let mut endpoint_url = if req.url().starts_with(API_BASE_URL) {
             self.api_base_url.clone()
         } else {

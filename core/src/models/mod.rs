@@ -1,4 +1,4 @@
-use crate::constants::*;
+use crate::constants::{LOGIN_URL, REGISTER_URL};
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
@@ -11,7 +11,14 @@ pub trait ApiRequest: Serialize {
     type Response;
 
     fn url(&self) -> &'static str;
+
     fn method(&self) -> reqwest::Method;
+
+    /// Decodes the HTTP response expected by this request.
+    ///
+    /// # Errors
+    ///
+    /// Returns a request-specific API, transport, or response decoding error.
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response>;
 }
 
@@ -54,7 +61,8 @@ pub struct CreateUserRequest {
 }
 
 impl CreateUserRequest {
-    pub fn new(email: String, password: String, username: String) -> Self {
+    #[must_use]
+    pub const fn new(email: String, password: String, username: String) -> Self {
         Self {
             email,
             password,
@@ -123,7 +131,8 @@ pub struct LoginRequest {
 }
 
 impl LoginRequest {
-    pub fn new(email: String, password: String) -> Self {
+    #[must_use]
+    pub const fn new(email: String, password: String) -> Self {
         Self {
             username: email,
             password,

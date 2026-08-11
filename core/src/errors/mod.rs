@@ -31,6 +31,10 @@ pub enum StreamableError {
     /// The API response body did not match the expected model.
     #[error(transparent)]
     ResponseDecode(#[from] serde_json::Error),
+
+    /// A configured or request URL was invalid.
+    #[error(transparent)]
+    UrlParse(#[from] url::ParseError),
 }
 
 pub type Result<T> = std::result::Result<T, StreamableError>;

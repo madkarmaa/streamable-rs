@@ -141,24 +141,24 @@ async fn test_api_client_initialization() {
 }
 
 #[test]
-fn configured_base_urls_are_stored() -> anyhow::Result<()> {
-    let auth_base_url = Url::parse("http://auth.example.test")?;
-    let api_base_url = Url::parse("http://api.example.test")?;
-    let client = StreamableClient::with_base_urls(auth_base_url.clone(), api_base_url.clone())?;
+fn configured_base_urls_are_stored() {
+    let auth_base_url =
+        Url::parse("http://auth.example.test").expect("mock auth URL should be valid");
+    let api_base_url = Url::parse("http://api.example.test").expect("mock API URL should be valid");
+    let client = StreamableClient::with_base_urls(auth_base_url.clone(), api_base_url.clone())
+        .expect("client should initialize");
 
     assert_eq!(client.auth_base_url, auth_base_url);
     assert_eq!(client.api_base_url, api_base_url);
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn test_successful_random_registration() -> anyhow::Result<()> {
+async fn test_successful_random_registration() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let client = StreamableClient::new()?;
+    let client = StreamableClient::new().expect("client should initialize");
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let mock_server = MockServer::start().await;
@@ -167,9 +167,12 @@ async fn test_successful_random_registration() -> anyhow::Result<()> {
     mock_registration(&mock_server, "generated-user@example.com").await;
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-    let client = mock_client(&mock_server)?;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let (client, email, password) = client.register(None, None, None).await?;
+    let (client, email, password) = client
+        .register(None, None, None)
+        .await
+        .expect("registration should succeed");
 
     assert!(!email.is_empty());
     assert!(!password.is_empty());
@@ -181,18 +184,17 @@ async fn test_successful_random_registration() -> anyhow::Result<()> {
             .received_requests()
             .await
             .expect("mock server should record requests");
-        let body: serde_json::Value = serde_json::from_slice(&requests[0].body)?;
+        let body: serde_json::Value =
+            serde_json::from_slice(&requests[0].body).expect("request body should be JSON");
 
         assert_eq!(body["email"], email);
         assert_eq!(body["password"], password);
         assert_eq!(body["username"], email);
     }
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn test_successful_registration_and_login() -> anyhow::Result<()> {
+async fn test_successful_registration_and_login() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
@@ -209,36 +211,36 @@ async fn test_successful_registration_and_login() -> anyhow::Result<()> {
     mock_login(&mock_server, &email, &password).await;
 
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let registration_client = StreamableClient::new()?;
+    let registration_client = StreamableClient::new().expect("client should initialize");
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-    let registration_client = mock_client(&mock_server)?;
+    let registration_client = mock_client(&mock_server).expect("mock client should initialize");
 
     let (registered_client, returned_email, returned_password) = registration_client
         .register(Some(email.clone()), Some(password.clone()), None)
-        .await?;
+        .await
+        .expect("registration should succeed");
 
     assert_eq!(returned_email, email);
     assert_eq!(returned_password, password);
     assert_eq!(registered_client.user().email, email);
     assert!(registered_client.is_authenticated());
 
-    let login_client = registered_client.logout()?;
+    let login_client = registered_client.logout().expect("logout should succeed");
 
     assert!(!login_client.is_authenticated());
 
     let logged_in_client = login_client
         .login(returned_email, returned_password)
-        .await?;
+        .await
+        .expect("login should succeed");
 
     assert_eq!(logged_in_client.user().email, email);
     assert!(logged_in_client.is_authenticated());
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn registration_reports_email_already_in_use() -> anyhow::Result<()> {
+async fn registration_reports_email_already_in_use() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
@@ -247,11 +249,13 @@ async fn registration_reports_email_already_in_use() -> anyhow::Result<()> {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let password = generate_random_password();
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let (_registered_client, _, _) = StreamableClient::new()?
+    let (_registered_client, _, _) = StreamableClient::new()
+        .expect("client should initialize")
         .register(Some(email.clone()), Some(password.clone()), None)
-        .await?;
+        .await
+        .expect("first registration should succeed");
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let client = StreamableClient::new()?;
+    let client = StreamableClient::new().expect("client should initialize");
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let mock_server = MockServer::start().await;
@@ -267,7 +271,7 @@ async fn registration_reports_email_already_in_use() -> anyhow::Result<()> {
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let password = "Password1".to_string();
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-    let client = mock_client(&mock_server)?;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
 
     let error = expect_streamable_error(
         client.register(Some(email), Some(password), None).await,
@@ -279,17 +283,15 @@ async fn registration_reports_email_already_in_use() -> anyhow::Result<()> {
         StreamableError::EmailAlreadyInUse { ref message }
             if message.contains("Email already in use")
     ));
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn login_reports_invalid_credentials() -> anyhow::Result<()> {
+async fn login_reports_invalid_credentials() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let client = StreamableClient::new()?;
+    let client = StreamableClient::new().expect("client should initialize");
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let email = generate_random_username();
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
@@ -307,7 +309,7 @@ async fn login_reports_invalid_credentials() -> anyhow::Result<()> {
     )
     .await;
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-    let client = mock_client(&mock_server)?;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let email = "user@example.com".to_string();
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -320,12 +322,10 @@ async fn login_reports_invalid_credentials() -> anyhow::Result<()> {
         StreamableError::InvalidCredentials { ref message }
             if message == "Invalid username or password"
     ));
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn authentication_reports_rate_limits() -> anyhow::Result<()> {
+async fn authentication_reports_rate_limits() {
     let error = {
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -337,7 +337,8 @@ async fn authentication_reports_rate_limits() -> anyhow::Result<()> {
 
         let endpoint = format!("{}/check", mock_server.uri());
         let error = expect_streamable_error(
-            mock_client(&mock_server)?
+            mock_client(&mock_server)
+                .expect("mock client should initialize")
                 .login("user@example.com".to_string(), "Password1".to_string())
                 .await,
             "login should be rate limited",
@@ -353,17 +354,15 @@ async fn authentication_reports_rate_limits() -> anyhow::Result<()> {
     };
 
     assert!(matches!(error, StreamableError::RateLimitExceeded { .. }));
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn registration_reports_password_validation() -> anyhow::Result<()> {
+async fn registration_reports_password_validation() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let client = StreamableClient::new()?;
+    let client = StreamableClient::new().expect("client should initialize");
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let email = generate_random_username();
 
@@ -379,7 +378,7 @@ async fn registration_reports_password_validation() -> anyhow::Result<()> {
         .mount(&mock_server)
         .await;
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-    let client = mock_client(&mock_server)?;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let email = "user@example.com".to_string();
 
@@ -395,12 +394,10 @@ async fn registration_reports_password_validation() -> anyhow::Result<()> {
         StreamableError::PasswordValidation { message }
             if message.starts_with("Password must ")
     ));
-
-    Ok(())
 }
 
 #[tokio::test]
-async fn authentication_reports_invalid_sessions() -> anyhow::Result<()> {
+async fn authentication_reports_invalid_sessions() {
     let error = {
         let mock_server = MockServer::start().await;
         mock_json_error(
@@ -413,7 +410,8 @@ async fn authentication_reports_invalid_sessions() -> anyhow::Result<()> {
         .await;
 
         expect_streamable_error(
-            mock_client(&mock_server)?
+            mock_client(&mock_server)
+                .expect("mock client should initialize")
                 .login("user@example.com".to_string(), "Password1".to_string())
                 .await,
             "login should fail with an invalid session",
@@ -421,6 +419,4 @@ async fn authentication_reports_invalid_sessions() -> anyhow::Result<()> {
     };
 
     assert!(matches!(error, StreamableError::InvalidSession { .. }));
-
-    Ok(())
 }

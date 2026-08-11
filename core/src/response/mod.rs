@@ -15,7 +15,7 @@ pub struct ApiResponse {
 }
 
 impl ApiResponse {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         status: StatusCode,
         endpoint: Url,
         body: Bytes,
@@ -29,18 +29,26 @@ impl ApiResponse {
         }
     }
 
-    pub fn status(&self) -> StatusCode {
+    #[must_use]
+    pub const fn status(&self) -> StatusCode {
         self.status
     }
 
-    pub fn endpoint(&self) -> &Url {
+    #[must_use]
+    pub const fn endpoint(&self) -> &Url {
         &self.endpoint
     }
 
+    #[must_use]
     pub fn text(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.body)
     }
 
+    /// Deserializes the response body after checking the HTTP status.
+    ///
+    /// # Errors
+    ///
+    /// Returns the stored transport error or a JSON decoding error.
     pub fn json<T>(self) -> Result<T>
     where
         T: DeserializeOwned,
