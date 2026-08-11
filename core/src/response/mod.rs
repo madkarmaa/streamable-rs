@@ -6,6 +6,9 @@ use url::Url;
 
 use crate::errors::{Result, StreamableError};
 
+#[cfg(test)]
+mod tests;
+
 /// HTTP response data passed to an [`ApiRequest`](crate::models::ApiRequest) decoder.
 pub struct ApiResponse {
     status: StatusCode,
