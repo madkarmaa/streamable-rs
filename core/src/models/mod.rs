@@ -1,4 +1,4 @@
-use crate::constants::{LOGIN_URL, REGISTER_URL, SETTINGS_URL};
+use crate::constants::{CHANGE_PASSWORD_URL, LOGIN_URL, REGISTER_URL, SETTINGS_URL};
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
@@ -169,6 +169,58 @@ impl ApiRequest for LoginRequest {
         }
 
         response.json()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChangePasswordRequest {
+    pub session: String,
+    pub current_password: String,
+    pub new_password: String,
+}
+
+impl ChangePasswordRequest {
+    #[must_use]
+    pub fn new(session: &str, current_password: &str, new_password: &str) -> Self {
+        Self {
+            session: session.trim().to_string(),
+            current_password: current_password.trim().to_string(),
+            new_password: new_password.trim().to_string(),
+        }
+    }
+}
+
+impl ApiRequest for ChangePasswordRequest {
+    type Response = ();
+
+    fn url(&self) -> &'static str {
+        CHANGE_PASSWORD_URL
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::POST
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if let Some(error) = response.api_error() {
+            if response.status() == StatusCode::BAD_REQUEST && error.error == "ValidationError" {
+                return Err(StreamableError::PasswordValidation {
+                    message: error.message,
+                });
+            }
+
+            if error.error == "AuthError" {
+                return Err(StreamableError::InvalidCredentials {
+                    message: "Current password is incorrect.".to_string(),
+                });
+            }
+        }
+
+        response.into_empty()
     }
 }
 

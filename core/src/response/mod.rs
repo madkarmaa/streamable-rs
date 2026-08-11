@@ -60,6 +60,14 @@ impl ApiResponse {
         Ok(serde_json::from_slice(&self.body)?)
     }
 
+    pub(crate) fn into_empty(self) -> Result<()> {
+        if let Some(error) = self.status_error {
+            return Err(StreamableError::Request(error));
+        }
+
+        Ok(())
+    }
+
     pub(crate) fn api_error(&self) -> Option<crate::models::ErrorResponse> {
         serde_json::from_slice(&self.body).ok()
     }

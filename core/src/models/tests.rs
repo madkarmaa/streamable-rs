@@ -1,4 +1,4 @@
-use super::{PrivacySettingsRequest, Visibility};
+use super::{ChangePasswordRequest, PrivacySettingsRequest, Visibility};
 
 #[test]
 fn visibility_serializes_as_lowercase_strings() {
@@ -19,5 +19,19 @@ fn privacy_settings_request_omits_none_fields() {
     assert_eq!(
         serde_json::to_value(request).expect("privacy settings request should serialize"),
         serde_json::json!({ "allow_download": false })
+    );
+}
+
+#[test]
+fn change_password_request_serializes_session_and_trimmed_passwords() {
+    let request = ChangePasswordRequest::new(" mock-session ", " Password1 ", " NewPassword2 ");
+
+    assert_eq!(
+        serde_json::to_value(request).expect("change password request should serialize"),
+        serde_json::json!({
+            "session": "mock-session",
+            "current_password": "Password1",
+            "new_password": "NewPassword2"
+        })
     );
 }

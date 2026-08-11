@@ -3,7 +3,7 @@ use crate::{StreamableError, utils::*};
 
 use serde_json::json;
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-use wiremock::matchers::body_json;
+use wiremock::matchers::{body_json, header};
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 use wiremock::{Match, Request};
 use wiremock::{
@@ -237,6 +237,176 @@ async fn test_successful_registration_and_login() {
 
     assert_eq!(logged_in_client.user().email, email);
     assert!(logged_in_client.is_authenticated());
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+async fn remote_change_password_flow() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let email = generate_random_username();
+    let current_password = generate_random_password();
+    let mut new_password = generate_random_password();
+    while new_password == current_password {
+        new_password = generate_random_password();
+    }
+    let mut wrong_password = generate_random_password();
+    while wrong_password == current_password {
+        wrong_password = generate_random_password();
+    }
+
+    let (client, _, _) = StreamableClient::new()
+        .expect("client should initialize")
+        .register(Some(email.clone()), Some(current_password.clone()), None)
+        .await
+        .expect("registration should succeed");
+
+    let error = expect_streamable_error(
+        client.change_password(&wrong_password, &new_password).await,
+        "wrong current password should fail",
+    );
+    assert!(matches!(
+        error,
+        StreamableError::InvalidCredentials { ref message }
+            if message == "Current password is incorrect."
+    ));
+
+    let error = expect_streamable_error(
+        client.change_password(&current_password, "weak").await,
+        "weak new password should fail",
+    );
+    assert!(matches!(
+        error,
+        StreamableError::PasswordValidation { ref message }
+            if message.starts_with("Password must ")
+    ));
+
+    client
+        .change_password(&current_password, &new_password)
+        .await
+        .expect("remote password change should succeed");
+
+    let client = client
+        .logout()
+        .expect("logout should succeed")
+        .login(email.clone(), new_password)
+        .await
+        .expect("new password should authenticate");
+
+    assert_eq!(client.user().email, email);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+async fn mock_change_password_responses(
+    server: &MockServer,
+    current_password: &str,
+    new_password: &str,
+    wrong_password: &str,
+    validation_message: &str,
+) {
+    let responses = [
+        (
+            wrong_password,
+            new_password,
+            200,
+            json!({
+                "error": "AuthError",
+                "message": "An error occurred while changing your password. Please try again."
+            }),
+        ),
+        (
+            current_password,
+            "weak",
+            400,
+            json!({
+                "error": "ValidationError",
+                "message": validation_message
+            }),
+        ),
+        (
+            current_password,
+            new_password,
+            200,
+            json!({ "message": "Password changed" }),
+        ),
+    ];
+
+    for (provided_password, requested_password, status, response) in responses {
+        Mock::given(method("POST"))
+            .and(path("/me/change_password"))
+            .and(header("cookie", "session=mock-session"))
+            .and(body_json(json!({
+                "session": "mock-session",
+                "current_password": provided_password,
+                "new_password": requested_password
+            })))
+            .respond_with(ResponseTemplate::new(status).set_body_json(response))
+            .expect(1)
+            .mount(server)
+            .await;
+    }
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+async fn mocked_change_password_flow() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let current_password = "Password1";
+    let new_password = "NewPassword2";
+    let wrong_password = "WrongPassword1";
+    let validation_message = "Password must be at least 8 characters, and contain at least one uppercase letter (A-Z), one lowercase letter (a-z), and one number (0-9).";
+
+    mock_registration_with_credentials(&mock_server, email, current_password).await;
+    mock_change_password_responses(
+        &mock_server,
+        current_password,
+        new_password,
+        wrong_password,
+        validation_message,
+    )
+    .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(
+            Some(email.to_string()),
+            Some(current_password.to_string()),
+            None,
+        )
+        .await
+        .expect("registration should succeed");
+
+    let error = expect_streamable_error(
+        client.change_password(wrong_password, new_password).await,
+        "wrong current password should fail",
+    );
+    assert!(matches!(
+        error,
+        StreamableError::InvalidCredentials { ref message }
+            if message == "Current password is incorrect."
+    ));
+
+    let error = expect_streamable_error(
+        client.change_password(current_password, "weak").await,
+        "weak new password should fail",
+    );
+    assert!(matches!(
+        error,
+        StreamableError::PasswordValidation { ref message }
+            if message == validation_message
+    ));
+
+    client
+        .change_password(current_password, new_password)
+        .await
+        .expect("password change should succeed");
+}
+
+#[tokio::test]
+async fn change_password_uses_session_cookie_and_changes_credentials() {
+    #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+    remote_change_password_flow().await;
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    mocked_change_password_flow().await;
 }
 
 #[tokio::test]

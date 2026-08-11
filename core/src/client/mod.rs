@@ -1,10 +1,12 @@
 use crate::{
     constants::{API_BASE_URL, AUTH_BASE_URL},
-    errors::Result,
+    errors::{Result, StreamableError},
     models::{self, ApiRequest},
     response::ApiResponse,
     utils,
 };
+use reqwest::cookie::{CookieStore, Jar};
+use std::sync::Arc;
 use url::Url;
 
 /// Marker for a client without an authenticated session.
@@ -52,6 +54,7 @@ pub type AuthenticatedStreamableClient = StreamableClient<Authenticated>;
 /// Streamable API client.
 pub struct StreamableClient<State = Unauthenticated> {
     client: reqwest::Client,
+    cookie_jar: Arc<Jar>,
     auth_base_url: Url,
     api_base_url: Url,
     state: State,
@@ -68,10 +71,14 @@ impl StreamableClient<Unauthenticated> {
     }
 
     fn with_base_urls(auth_base_url: Url, api_base_url: Url) -> Result<Self> {
-        let client = reqwest::Client::builder().cookie_store(true).build()?;
+        let cookie_jar = Arc::new(Jar::default());
+        let client = reqwest::Client::builder()
+            .cookie_provider(Arc::clone(&cookie_jar))
+            .build()?;
 
         Ok(Self {
             client,
+            cookie_jar,
             auth_base_url,
             api_base_url,
             state: Unauthenticated,
@@ -138,6 +145,7 @@ impl StreamableClient<Unauthenticated> {
     fn into_authenticated(self, user: models::AuthenticatedUser) -> AuthenticatedStreamableClient {
         StreamableClient {
             client: self.client,
+            cookie_jar: self.cookie_jar,
             auth_base_url: self.auth_base_url,
             api_base_url: self.api_base_url,
             state: Authenticated { user },
@@ -179,6 +187,19 @@ impl StreamableClient<Authenticated> {
         Ok(&user.privacy_settings)
     }
 
+    /// Changes the authenticated account's password.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session cookie is missing, the current password is incorrect,
+    /// the new password fails validation, or the request fails.
+    pub async fn change_password(&self, current_password: &str, new_password: &str) -> Result<()> {
+        let session = self.session_cookie()?;
+        let request = models::ChangePasswordRequest::new(&session, current_password, new_password);
+
+        self.execute(&request).await
+    }
+
     /// Logs out the currently authenticated user.
     ///
     /// # Errors
@@ -197,6 +218,32 @@ impl StreamableClient<Authenticated> {
     {
         self.state.user = self.execute(request).await?;
         Ok(&self.state.user)
+    }
+
+    fn session_cookie(&self) -> Result<String> {
+        let cookies = self
+            .cookie_jar
+            .cookies(&self.auth_base_url)
+            .ok_or_else(|| StreamableError::InvalidSession {
+                message: "No session cookie found. Are you logged in?".to_string(),
+            })?;
+
+        let cookies = cookies
+            .to_str()
+            .map_err(|_| StreamableError::InvalidSession {
+                message: "The session cookie is not valid UTF-8.".to_string(),
+            })?;
+
+        cookies
+            .split(';')
+            .find_map(|cookie| {
+                let (name, value) = cookie.trim().split_once('=')?;
+                (name == "session").then(|| value.to_string())
+            })
+            .filter(|session| !session.is_empty())
+            .ok_or_else(|| StreamableError::InvalidSession {
+                message: "No session cookie found. Are you logged in?".to_string(),
+            })
     }
 }
 
