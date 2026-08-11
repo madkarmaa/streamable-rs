@@ -240,6 +240,77 @@ async fn test_successful_registration_and_login() {
 }
 
 #[tokio::test]
+async fn privacy_settings_update_omits_none_fields_and_refreshes_user() {
+    #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+    {
+        let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+        let (mut client, _, _) = StreamableClient::new()
+            .expect("client should initialize")
+            .register(None, None, None)
+            .await
+            .expect("registration should succeed");
+        let allow_download = !client.user().privacy_settings.allow_download;
+
+        client
+            .change_privacy_settings(Some(allow_download), None, None)
+            .await
+            .expect("remote privacy settings update should succeed");
+
+        assert_eq!(
+            client.user().privacy_settings.allow_download,
+            allow_download
+        );
+    }
+
+    #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+    {
+        let mock_server = MockServer::start().await;
+        let email = "user@example.com";
+        let password = "Password1";
+
+        mock_login(&mock_server, email, password).await;
+
+        let mut updated_user = authenticated_user(email);
+        updated_user["privacy_settings"]["allow_download"] = json!(false);
+        updated_user["privacy_settings"]["visibility"] = json!("private");
+
+        Mock::given(method("PATCH"))
+            .and(path("/api/v1/me/settings"))
+            .and(body_json(json!({
+                "allow_download": false,
+                "visibility": "private"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(updated_user))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut client = mock_client(&mock_server)
+            .expect("mock client should initialize")
+            .login(email.to_string(), password.to_string())
+            .await
+            .expect("login should succeed");
+
+        {
+            let settings = client
+                .change_privacy_settings(Some(false), None, Some(models::Visibility::Private))
+                .await
+                .expect("privacy settings update should succeed");
+
+            assert!(!settings.allow_download);
+            assert!(settings.allow_sharing);
+            assert!(matches!(settings.visibility, models::Visibility::Private));
+        }
+
+        assert!(!client.user().privacy_settings.allow_download);
+        assert!(matches!(
+            client.user().privacy_settings.visibility,
+            models::Visibility::Private
+        ));
+    }
+}
+
+#[tokio::test]
 async fn registration_reports_email_already_in_use() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;

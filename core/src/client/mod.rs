@@ -158,6 +158,27 @@ impl StreamableClient<Authenticated> {
         true
     }
 
+    /// Changes the authenticated user's privacy settings.
+    ///
+    /// Settings passed as `None` are omitted from the PATCH body, leaving those server-side
+    /// values unchanged. The response replaces the user data stored by this client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails or Streamable rejects the session or settings.
+    pub async fn change_privacy_settings(
+        &mut self,
+        allow_download: Option<bool>,
+        allow_sharing: Option<bool>,
+        visibility: Option<models::Visibility>,
+    ) -> Result<&models::PrivacySettings> {
+        let request =
+            models::PrivacySettingsRequest::new(allow_download, allow_sharing, visibility);
+
+        let user = self.execute_and_update_user(&request).await?;
+        Ok(&user.privacy_settings)
+    }
+
     /// Logs out the currently authenticated user.
     ///
     /// # Errors
@@ -165,6 +186,17 @@ impl StreamableClient<Authenticated> {
     /// Returns an error when the replacement HTTP client cannot be built.
     pub fn logout(self) -> Result<UnauthenticatedStreamableClient> {
         StreamableClient::with_base_urls(self.auth_base_url, self.api_base_url)
+    }
+
+    async fn execute_and_update_user<Req>(
+        &mut self,
+        request: &Req,
+    ) -> Result<&models::AuthenticatedUser>
+    where
+        Req: ApiRequest<Response = models::AuthenticatedUser> + Sync,
+    {
+        self.state.user = self.execute(request).await?;
+        Ok(&self.state.user)
     }
 }
 
