@@ -1,5 +1,7 @@
 use crate::constants::EMAIL_DOMAINS;
+use file_format::{FileFormat, Kind};
 use rand::{Rng, RngExt, prelude::IndexedRandom, seq::SliceRandom};
+use std::path::Path;
 
 #[cfg(test)]
 mod tests;
@@ -52,4 +54,14 @@ pub fn generate_random_password() -> String {
     password.shuffle(&mut rng);
 
     password.into_iter().map(char::from).collect()
+}
+
+#[must_use]
+pub fn is_video_file(path: &Path) -> bool {
+    FileFormat::from_file(path).is_ok_and(|format| {
+        matches!(format.kind(), Kind::Video) || format == FileFormat::SmallWebFormat
+    }) || path
+        .extension()
+        .and_then(std::ffi::OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("hevc"))
 }
