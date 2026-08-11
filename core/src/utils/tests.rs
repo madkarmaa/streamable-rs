@@ -60,3 +60,20 @@ fn every_media_fixture_is_recognized_as_video() {
         "media fixtures should be detected as video: {unsupported:?}"
     );
 }
+
+#[test]
+fn raw_hevc_is_detected_without_hevc_extension() {
+    let media_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../media");
+    let source = media_dir.join("hevc.hevc");
+    let disguised =
+        std::env::temp_dir().join(format!("streamable-rs-raw-hevc-{}.txt", std::process::id()));
+
+    std::fs::copy(&source, &disguised).expect("HEVC fixture should copy to a .txt path");
+    let detected = is_video_file(&disguised);
+    std::fs::remove_file(&disguised).expect("temporary HEVC fixture should be removed");
+
+    assert!(
+        detected,
+        "raw HEVC content should be detected through bytes"
+    );
+}
