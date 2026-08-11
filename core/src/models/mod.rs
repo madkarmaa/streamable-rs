@@ -13,9 +13,13 @@ pub trait ApiRequest: Serialize {
     /// The specific response model expected from this request
     type Response;
 
-    fn url(&self) -> &'static str;
+    fn url(&self) -> &str;
 
     fn method(&self) -> reqwest::Method;
+
+    fn has_json_body(&self) -> bool {
+        true
+    }
 
     /// Decodes the HTTP response expected by this request.
     ///
@@ -94,7 +98,7 @@ impl Serialize for CreateUserRequest {
 impl ApiRequest for CreateUserRequest {
     type Response = AuthenticatedUser;
 
-    fn url(&self) -> &'static str {
+    fn url(&self) -> &str {
         REGISTER_URL
     }
 
@@ -146,7 +150,7 @@ impl LoginRequest {
 impl ApiRequest for LoginRequest {
     type Response = AuthenticatedUser;
 
-    fn url(&self) -> &'static str {
+    fn url(&self) -> &str {
         LOGIN_URL
     }
 
@@ -193,7 +197,7 @@ impl ChangePasswordRequest {
 impl ApiRequest for ChangePasswordRequest {
     type Response = ();
 
-    fn url(&self) -> &'static str {
+    fn url(&self) -> &str {
         CHANGE_PASSWORD_URL
     }
 
@@ -241,7 +245,7 @@ impl CreateLabelRequest {
 impl ApiRequest for CreateLabelRequest {
     type Response = Label;
 
-    fn url(&self) -> &'static str {
+    fn url(&self) -> &str {
         LABELS_URL
     }
 
@@ -268,6 +272,51 @@ impl ApiRequest for CreateLabelRequest {
 pub struct Label {
     pub name: String,
     pub id: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DeleteLabelRequest {
+    #[serde(skip)]
+    url: String,
+    id: u64,
+}
+
+impl DeleteLabelRequest {
+    #[must_use]
+    pub fn new(id: u64) -> Self {
+        Self {
+            url: format!("{LABELS_URL}/{id}"),
+            id,
+        }
+    }
+}
+
+impl ApiRequest for DeleteLabelRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::DELETE
+    }
+
+    fn has_json_body(&self) -> bool {
+        false
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if response.status() == StatusCode::NOT_FOUND {
+            return Err(StreamableError::LabelNotFound { id: self.id });
+        }
+
+        response.into_empty()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,7 +388,7 @@ impl PrivacySettingsRequest {
 impl ApiRequest for PrivacySettingsRequest {
     type Response = AuthenticatedUser;
 
-    fn url(&self) -> &'static str {
+    fn url(&self) -> &str {
         SETTINGS_URL
     }
 

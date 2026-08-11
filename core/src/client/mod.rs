@@ -212,6 +212,16 @@ impl StreamableClient<Authenticated> {
         self.execute(&models::CreateLabelRequest::new(name)).await
     }
 
+    /// Deletes a label belonging to the authenticated user.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is invalid, the label does not exist, or the request
+    /// fails.
+    pub async fn delete_label(&self, id: u64) -> Result<()> {
+        self.execute(&models::DeleteLabelRequest::new(id)).await
+    }
+
     /// Logs out the currently authenticated user.
     ///
     /// # Errors
@@ -273,12 +283,13 @@ impl<State: Sync> StreamableClient<State> {
         endpoint_url.set_path(request_url.path());
         endpoint_url.set_query(request_url.query());
 
-        let response = self
-            .client
-            .request(req.method(), endpoint_url.clone())
-            .json(req)
-            .send()
-            .await?;
+        let request = self.client.request(req.method(), endpoint_url.clone());
+        let request = if req.has_json_body() {
+            request.json(req)
+        } else {
+            request
+        };
+        let response = request.send().await?;
 
         let status = response.status();
         let status_error = response.error_for_status_ref().err();

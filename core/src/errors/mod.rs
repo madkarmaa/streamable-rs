@@ -24,6 +24,10 @@ pub enum StreamableError {
     #[error("Label '{name}' already exists.")]
     LabelAlreadyExists { name: String },
 
+    /// Label operation failed because the authenticated user does not have this label.
+    #[error("Label ID {id} not found.")]
+    LabelNotFound { id: u64 },
+
     /// Streamable rejected the request because the endpoint rate limit was exceeded.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded { endpoint: String },

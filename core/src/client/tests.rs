@@ -480,6 +480,78 @@ async fn create_label_reports_duplicate_name() {
     ));
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn delete_label_sends_bodyless_request() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/labels/174172"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    client
+        .delete_label(174_172)
+        .await
+        .expect("label deletion should succeed");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    let delete_request = requests
+        .iter()
+        .find(|request| request.method.as_str() == "DELETE")
+        .expect("delete request should be recorded");
+    assert!(delete_request.body.is_empty());
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn delete_label_reports_missing_id() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/labels/696969"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "statusCode": 404,
+            "error": "Not Found",
+            "message": "Not Found"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let error = expect_streamable_error(
+        client.delete_label(696_969).await,
+        "missing label deletion should fail",
+    );
+
+    assert!(matches!(
+        error,
+        StreamableError::LabelNotFound { id: 696_969 }
+    ));
+}
+
 #[tokio::test]
 async fn privacy_settings_update_omits_none_fields_and_refreshes_user() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
