@@ -1,12 +1,21 @@
-macro_rules! auth_base {
+macro_rules! auth_base_url {
     () => {
         "https://ajax.streamable.com"
     };
 }
 
-pub const AUTH_BASE_URL: &str = auth_base!();
-pub const CREATE_USER_URL: &str = concat!(auth_base!(), "/users");
-pub const LOGIN_URL: &str = concat!(auth_base!(), "/check");
+macro_rules! api_base_url {
+    () => {
+        "https://api-f.streamable.com/api/v1"
+    };
+}
+
+pub const AUTH_BASE_URL: &str = auth_base_url!();
+pub const REGISTER_URL: &str = concat!(auth_base_url!(), "/users");
+pub const LOGIN_URL: &str = concat!(auth_base_url!(), "/check");
+
+pub const API_BASE_URL: &str = api_base_url!();
+pub const ME_URL: &str = concat!(api_base_url!(), "/me");
 
 pub const EMAIL_DOMAINS: &[&str] = &[
     "gmail.com",

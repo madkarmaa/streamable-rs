@@ -53,20 +53,25 @@ pub type AuthenticatedStreamableClient = StreamableClient<Authenticated>;
 pub struct StreamableClient<State = Unauthenticated> {
     client: reqwest::Client,
     auth_base_url: Url,
+    api_base_url: Url,
     state: State,
 }
 
 impl StreamableClient<Unauthenticated> {
     pub fn new() -> Result<Self> {
-        Self::with_auth_base_url(Url::parse(AUTH_BASE_URL).expect("valid auth base URL"))
+        Self::with_base_urls(
+            Url::parse(AUTH_BASE_URL).expect("valid auth base URL"),
+            Url::parse(API_BASE_URL).expect("valid API base URL"),
+        )
     }
 
-    fn with_auth_base_url(auth_base_url: Url) -> Result<Self> {
+    fn with_base_urls(auth_base_url: Url, api_base_url: Url) -> Result<Self> {
         let client = reqwest::Client::builder().cookie_store(true).build()?;
 
         Ok(Self {
             client,
             auth_base_url,
+            api_base_url,
             state: Unauthenticated,
         })
     }
@@ -123,6 +128,7 @@ impl StreamableClient<Unauthenticated> {
         StreamableClient {
             client: self.client,
             auth_base_url: self.auth_base_url,
+            api_base_url: self.api_base_url,
             state: Authenticated { user },
         }
     }
@@ -141,7 +147,7 @@ impl StreamableClient<Authenticated> {
 
     /// Logs out the currently authenticated user.
     pub fn logout(self) -> Result<UnauthenticatedStreamableClient> {
-        StreamableClient::with_auth_base_url(self.auth_base_url)
+        StreamableClient::with_base_urls(self.auth_base_url, self.api_base_url)
     }
 }
 
@@ -151,7 +157,11 @@ impl<State> StreamableClient<State> {
         Req: ApiRequest,
     {
         let request_url = Url::parse(req.url()).expect("API request URL must be valid");
-        let mut endpoint_url = self.auth_base_url.clone();
+        let mut endpoint_url = if req.url().starts_with(API_BASE_URL) {
+            self.api_base_url.clone()
+        } else {
+            self.auth_base_url.clone()
+        };
         endpoint_url.set_path(request_url.path());
         endpoint_url.set_query(request_url.query());
 

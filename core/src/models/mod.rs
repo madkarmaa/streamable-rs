@@ -84,7 +84,7 @@ impl ApiRequest for CreateUserRequest {
     type Response = AuthenticatedUser;
 
     fn url(&self) -> &'static str {
-        CREATE_USER_URL
+        REGISTER_URL
     }
 
     fn method(&self) -> reqwest::Method {

@@ -121,9 +121,9 @@ async fn mock_json_error(
 }
 
 fn mock_client(server: &MockServer) -> Result<UnauthenticatedStreamableClient> {
-    StreamableClient::with_auth_base_url(
-        Url::parse(&server.uri()).expect("mock server URI must be valid"),
-    )
+    let base_url = Url::parse(&server.uri()).expect("mock server URI must be valid");
+
+    StreamableClient::with_base_urls(base_url.clone(), base_url)
 }
 
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
@@ -138,6 +138,18 @@ async fn test_api_client_initialization() {
     let client = StreamableClient::new().expect("client should initialize");
 
     assert!(!client.is_authenticated());
+}
+
+#[test]
+fn configured_base_urls_are_stored() -> anyhow::Result<()> {
+    let auth_base_url = Url::parse("http://auth.example.test")?;
+    let api_base_url = Url::parse("http://api.example.test")?;
+    let client = StreamableClient::with_base_urls(auth_base_url.clone(), api_base_url.clone())?;
+
+    assert_eq!(client.auth_base_url, auth_base_url);
+    assert_eq!(client.api_base_url, api_base_url);
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -155,7 +167,7 @@ async fn test_successful_random_registration() -> anyhow::Result<()> {
     mock_registration(&mock_server, "generated-user@example.com").await;
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-    let client = StreamableClient::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
+    let client = mock_client(&mock_server)?;
 
     let (client, email, password) = client.register(None, None, None).await?;
 
@@ -200,8 +212,7 @@ async fn test_successful_registration_and_login() -> anyhow::Result<()> {
     let registration_client = StreamableClient::new()?;
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-    let registration_client =
-        StreamableClient::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
+    let registration_client = mock_client(&mock_server)?;
 
     let (registered_client, returned_email, returned_password) = registration_client
         .register(Some(email.clone()), Some(password.clone()), None)
