@@ -8,6 +8,9 @@ use std::path::Path;
 #[cfg(test)]
 mod tests;
 
+#[allow(dead_code)]
+pub(crate) mod s3;
+
 const LOWERCASE: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
 const UPPERCASE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS: &[u8] = b"0123456789";

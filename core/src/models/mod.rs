@@ -499,3 +499,80 @@ impl ApiRequest for PrivacySettingsRequest {
         response.json()
     }
 }
+
+/// Temporary AWS credentials returned for an S3 upload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)]
+pub(crate) struct Credentials {
+    pub(crate) access_key_id: String,
+    pub(crate) secret_access_key: String,
+    pub(crate) session_token: String,
+}
+
+/// S3 form fields returned while initializing an upload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct Fields {
+    pub(crate) key: String,
+    pub(crate) acl: String,
+    pub(crate) bucket: String,
+    #[serde(rename = "X-Amz-Algorithm")]
+    pub(crate) x_amz_algorithm: String,
+    #[serde(rename = "X-Amz-Credential")]
+    pub(crate) x_amz_credential: String,
+    #[serde(rename = "X-Amz-Date")]
+    pub(crate) x_amz_date: String,
+    #[serde(rename = "X-Amz-Security-Token")]
+    pub(crate) x_amz_security_token: String,
+    #[serde(rename = "Policy")]
+    pub(crate) policy: String,
+    #[serde(rename = "X-Amz-Signature")]
+    pub(crate) x_amz_signature: String,
+}
+
+/// Video metadata returned while initializing an upload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct Video {
+    pub(crate) shortcode: String,
+    pub(crate) date_added: i64,
+    pub(crate) url: String,
+}
+
+/// Video processing options returned while initializing an upload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct Options {
+    pub(crate) preset: String,
+    pub(crate) shortcode: String,
+    pub(crate) screenshot: bool,
+}
+
+/// Transcoder configuration returned while initializing an upload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct TranscoderOptions {
+    pub(crate) url: String,
+    pub(crate) token: String,
+    pub(crate) shortcode: String,
+    pub(crate) size: u64,
+}
+
+/// Complete S3 upload configuration returned by Streamable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct UploadInfo {
+    pub(crate) accelerated: bool,
+    pub(crate) bucket: String,
+    pub(crate) credentials: Credentials,
+    pub(crate) fields: Fields,
+    pub(crate) url: String,
+    pub(crate) video: Video,
+    pub(crate) options: Options,
+    pub(crate) shortcode: String,
+    pub(crate) key: String,
+    pub(crate) time: i64,
+    pub(crate) transcoder: Option<String>,
+    pub(crate) transcoder_options: TranscoderOptions,
+}

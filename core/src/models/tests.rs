@@ -1,6 +1,6 @@
 use super::{
     ChangePasswordRequest, CreateLabelRequest, PrivacySettingsRequest, RenameLabelRequest,
-    Visibility,
+    UploadInfo, Visibility,
 };
 
 #[test]
@@ -57,4 +57,57 @@ fn rename_label_request_trims_and_serializes_only_name() {
         serde_json::to_value(request).expect("rename label request should serialize"),
         serde_json::json!({ "name": "renamed" })
     );
+}
+
+#[test]
+fn upload_info_preserves_aws_wire_names() {
+    let upload_info: UploadInfo = serde_json::from_value(serde_json::json!({
+        "accelerated": false,
+        "bucket": "bucket",
+        "credentials": {
+            "accessKeyId": "access",
+            "secretAccessKey": "secret",
+            "sessionToken": "session"
+        },
+        "fields": {
+            "key": "key",
+            "acl": "private",
+            "bucket": "bucket",
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": "access/20250929/eu-west-1/s3/aws4_request",
+            "X-Amz-Date": "20250929T151031Z",
+            "X-Amz-Security-Token": "session",
+            "Policy": "policy",
+            "X-Amz-Signature": "signature"
+        },
+        "url": "url",
+        "video": {
+            "shortcode": "abc",
+            "date_added": 1,
+            "url": "video-url"
+        },
+        "options": { "preset": "mp4", "shortcode": "abc", "screenshot": true },
+        "shortcode": "abc",
+        "key": "key",
+        "time": 1,
+        "transcoder": null,
+        "transcoder_options": {
+            "url": "transcoder-url",
+            "token": "token",
+            "shortcode": "abc",
+            "size": 42
+        }
+    }))
+    .expect("upload info should deserialize");
+
+    let serialized = serde_json::to_value(upload_info).expect("upload info should serialize");
+    assert_eq!(serialized["credentials"]["accessKeyId"], "access");
+    assert_eq!(serialized["credentials"]["secretAccessKey"], "secret");
+    assert_eq!(serialized["credentials"]["sessionToken"], "session");
+    assert_eq!(
+        serialized["fields"]["X-Amz-Credential"],
+        "access/20250929/eu-west-1/s3/aws4_request"
+    );
+    assert_eq!(serialized["fields"]["X-Amz-Security-Token"], "session");
+    assert_eq!(serialized["fields"]["Policy"], "policy");
 }
