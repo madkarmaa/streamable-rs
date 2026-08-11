@@ -24,40 +24,40 @@ pub struct Authenticated {
 /// It cannot call authenticated-only methods:
 ///
 /// ```compile_fail
-/// use streamable::UnauthenticatedClient;
+/// use streamable::UnauthenticatedStreamableClient;
 ///
-/// fn requires_authentication(client: UnauthenticatedClient) {
+/// fn requires_authentication(client: UnauthenticatedStreamableClient) {
 ///     client.user();
 /// }
 /// ```
-pub type UnauthenticatedClient = Client<Unauthenticated>;
+pub type UnauthenticatedStreamableClient = StreamableClient<Unauthenticated>;
 
-/// Client returned by [`UnauthenticatedClient::register`] and
-/// [`UnauthenticatedClient::login`].
+/// Client returned by [`UnauthenticatedStreamableClient::register`] and
+/// [`UnauthenticatedStreamableClient::login`].
 ///
-/// It must call [`AuthenticatedClient::logout`] before authenticating again:
+/// It must call [`AuthenticatedStreamableClient::logout`] before authenticating again:
 ///
 /// ```compile_fail
-/// use streamable::AuthenticatedClient;
+/// use streamable::AuthenticatedStreamableClient;
 ///
-/// async fn login_again(client: AuthenticatedClient) {
+/// async fn login_again(client: AuthenticatedStreamableClient) {
 ///     client.login("user@example.com".into(), "password".into()).await;
 /// }
 ///
-/// async fn register_again(client: AuthenticatedClient) {
+/// async fn register_again(client: AuthenticatedStreamableClient) {
 ///     client.register(None, None, None).await;
 /// }
 /// ```
-pub type AuthenticatedClient = Client<Authenticated>;
+pub type AuthenticatedStreamableClient = StreamableClient<Authenticated>;
 
 /// Streamable API client.
-pub struct Client<State = Unauthenticated> {
+pub struct StreamableClient<State = Unauthenticated> {
     client: reqwest::Client,
     auth_base_url: Url,
     state: State,
 }
 
-impl Client<Unauthenticated> {
+impl StreamableClient<Unauthenticated> {
     pub fn new() -> Result<Self> {
         Self::with_auth_base_url(Url::parse(AUTH_BASE_URL).expect("valid auth base URL"))
     }
@@ -91,7 +91,7 @@ impl Client<Unauthenticated> {
         email: Option<String>,
         password: Option<String>,
         username: Option<String>,
-    ) -> Result<(AuthenticatedClient, String, String)> {
+    ) -> Result<(AuthenticatedStreamableClient, String, String)> {
         let email = email.unwrap_or_else(utils::generate_random_username);
         let password = password.unwrap_or_else(utils::generate_random_password);
         let username = username.unwrap_or_else(|| email.clone());
@@ -109,15 +109,19 @@ impl Client<Unauthenticated> {
     /// Google OAuth login is **NOT** supported.
     ///
     /// Facebook login is **NOT** supported.
-    pub async fn login(self, email: String, password: String) -> Result<AuthenticatedClient> {
+    pub async fn login(
+        self,
+        email: String,
+        password: String,
+    ) -> Result<AuthenticatedStreamableClient> {
         let request = models::LoginRequest::new(email, password);
         let user = self.execute(&request).await?;
 
         Ok(self.into_authenticated(user))
     }
 
-    fn into_authenticated(self, user: models::AuthenticatedUser) -> AuthenticatedClient {
-        Client {
+    fn into_authenticated(self, user: models::AuthenticatedUser) -> AuthenticatedStreamableClient {
+        StreamableClient {
             client: self.client,
             auth_base_url: self.auth_base_url,
             state: Authenticated { user },
@@ -125,7 +129,7 @@ impl Client<Unauthenticated> {
     }
 }
 
-impl Client<Authenticated> {
+impl StreamableClient<Authenticated> {
     /// The currently authenticated user's data.
     pub fn user(&self) -> &models::AuthenticatedUser {
         &self.state.user
@@ -137,12 +141,12 @@ impl Client<Authenticated> {
     }
 
     /// Logs out the currently authenticated user.
-    pub fn logout(self) -> Result<UnauthenticatedClient> {
-        Client::with_auth_base_url(self.auth_base_url)
+    pub fn logout(self) -> Result<UnauthenticatedStreamableClient> {
+        StreamableClient::with_auth_base_url(self.auth_base_url)
     }
 }
 
-impl<State> Client<State> {
+impl<State> StreamableClient<State> {
     async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
     where
         Req: ApiRequest,
@@ -291,8 +295,8 @@ mod tests {
             .await;
     }
 
-    fn mock_client(server: &MockServer) -> Result<UnauthenticatedClient> {
-        Client::with_auth_base_url(
+    fn mock_client(server: &MockServer) -> Result<UnauthenticatedStreamableClient> {
+        StreamableClient::with_auth_base_url(
             Url::parse(&server.uri()).expect("mock server URI must be valid"),
         )
     }
@@ -306,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_client_initialization() {
-        let client = Client::new().expect("client should initialize");
+        let client = StreamableClient::new().expect("client should initialize");
 
         assert!(!client.is_authenticated());
     }
@@ -317,7 +321,7 @@ mod tests {
         let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let client = Client::new()?;
+        let client = StreamableClient::new()?;
 
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let mock_server = MockServer::start().await;
@@ -326,7 +330,7 @@ mod tests {
         mock_registration(&mock_server, "generated-user@example.com").await;
 
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-        let client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
+        let client = StreamableClient::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
 
         let (client, email, password) = client.register(None, None, None).await?;
 
@@ -368,10 +372,11 @@ mod tests {
         mock_login(&mock_server, &email, &password).await;
 
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let registration_client = Client::new()?;
+        let registration_client = StreamableClient::new()?;
 
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-        let registration_client = Client::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
+        let registration_client =
+            StreamableClient::with_auth_base_url(Url::parse(&mock_server.uri())?)?;
 
         let (registered_client, returned_email, returned_password) = registration_client
             .register(Some(email.clone()), Some(password.clone()), None)
@@ -406,11 +411,11 @@ mod tests {
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let password = generate_random_password();
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let (_registered_client, _, _) = Client::new()?
+        let (_registered_client, _, _) = StreamableClient::new()?
             .register(Some(email.clone()), Some(password.clone()), None)
             .await?;
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let client = Client::new()?;
+        let client = StreamableClient::new()?;
 
         #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
         let mock_server = MockServer::start().await;
@@ -448,7 +453,7 @@ mod tests {
         let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let client = Client::new()?;
+        let client = StreamableClient::new()?;
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let email = generate_random_username();
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
@@ -523,7 +528,7 @@ mod tests {
         let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-        let client = Client::new()?;
+        let client = StreamableClient::new()?;
         #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
         let email = generate_random_username();
 
