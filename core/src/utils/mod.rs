@@ -1,12 +1,18 @@
+use crate::constants::EMAIL_DOMAINS;
 use rand::{Rng, RngExt, prelude::IndexedRandom, seq::SliceRandom};
 
-use crate::constants::EMAIL_DOMAINS;
+#[cfg(test)]
+mod tests;
 
 const LOWERCASE: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
 const UPPERCASE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const DIGITS: &[u8] = b"0123456789";
 const MIN_CREDENTIAL_LENGTH: usize = 8;
 const MAX_CREDENTIAL_LENGTH: usize = 20;
+
+fn random_char(rng: &mut impl Rng, characters: &[u8]) -> u8 {
+    characters.choose(rng).copied().unwrap_or_default()
+}
 
 /// Generates a username as a random email address.
 #[must_use]
@@ -47,10 +53,3 @@ pub fn generate_random_password() -> String {
 
     password.into_iter().map(char::from).collect()
 }
-
-fn random_char(rng: &mut impl Rng, characters: &[u8]) -> u8 {
-    characters.choose(rng).copied().unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests;

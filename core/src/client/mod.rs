@@ -9,6 +9,9 @@ use reqwest::cookie::{CookieStore, Jar};
 use std::sync::Arc;
 use url::Url;
 
+#[cfg(test)]
+mod tests;
+
 /// Marker for a client without an authenticated session.
 #[derive(Debug)]
 pub struct Unauthenticated;
@@ -311,6 +314,3 @@ impl<State: Sync> StreamableClient<State> {
         req.decode_response(ApiResponse::new(status, endpoint_url, body, status_error))
     }
 }
-
-#[cfg(test)]
-mod tests;
