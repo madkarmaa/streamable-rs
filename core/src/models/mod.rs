@@ -1,10 +1,13 @@
-use crate::constants::{LOGIN_URL, REGISTER_URL};
+use crate::constants::{LOGIN_URL, REGISTER_URL, SETTINGS_URL};
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
 };
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
+
+#[cfg(test)]
+mod tests;
 
 pub trait ApiRequest: Serialize {
     /// The specific response model expected from this request
@@ -197,9 +200,60 @@ pub struct AuthenticatedUser {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivacySettings {
     pub allow_download: bool,
     pub allow_sharing: bool,
-    pub hide_view_count: bool,
-    pub visibility: String,
+    pub visibility: Visibility,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PrivacySettingsRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_download: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_sharing: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Visibility>,
+}
+
+impl PrivacySettingsRequest {
+    #[must_use]
+    pub const fn new(
+        allow_download: Option<bool>,
+        allow_sharing: Option<bool>,
+        visibility: Option<Visibility>,
+    ) -> Self {
+        Self {
+            allow_download,
+            allow_sharing,
+            visibility,
+        }
+    }
+}
+
+impl ApiRequest for PrivacySettingsRequest {
+    type Response = AuthenticatedUser;
+
+    fn url(&self) -> &'static str {
+        SETTINGS_URL
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::PATCH
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        response.json()
+    }
 }
