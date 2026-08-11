@@ -45,6 +45,18 @@ fn upload_info() -> UploadInfo {
     .expect("the upload fixture should deserialize")
 }
 
+fn signing_headers(host: &str, timestamp: &str, payload_hash: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    insert_header(&mut headers, HOST, host).expect("the host should be a valid header value");
+    insert_header(&mut headers, X_AMZ_CONTENT_SHA256, payload_hash)
+        .expect("the payload hash should be a valid header value");
+    insert_header(&mut headers, X_AMZ_DATE, timestamp)
+        .expect("the timestamp should be a valid header value");
+    insert_header(&mut headers, X_AMZ_SECURITY_TOKEN, "session-token")
+        .expect("the token should be a valid header value");
+    headers
+}
+
 #[test]
 fn uri_encoding_matches_aws_rules() {
     assert_eq!(uri_encode("a b/c+~", true), "a%20b%2Fc%2B~");
@@ -83,7 +95,7 @@ fn canonical_request_and_string_to_sign_match_python_reference() {
         "x-amz-security-token;x-amz-user-agent"
     );
     let canonical_request = create_canonical_request(
-        "PUT",
+        &Method::PUT,
         "/uploads/test.mp4",
         "",
         canonical_headers,
@@ -108,42 +120,44 @@ fn canonical_request_and_string_to_sign_match_python_reference() {
 
 #[test]
 fn signature_sorts_and_encodes_query_and_extra_headers() {
-    let query = StringMap::from([
+    let query = QueryParameters::from([
         ("z".to_string(), "last value".to_string()),
         ("a".to_string(), "first/value".to_string()),
     ]);
-    let extra_headers = StringMap::from([
-        ("X-Amz-ACL".to_string(), "private".to_string()),
-        (
-            "x-amz-user-agent".to_string(),
-            AWS_SDK_USER_AGENT.to_string(),
-        ),
-    ]);
-    let (authorization, signed_headers, credential_scope) = calculate_aws_s3_v4_signature(
-        "PUT",
+    let mut headers = signing_headers(
         "example-bucket.s3.amazonaws.com",
-        "/uploads/test video.mp4",
-        "AKIDEXAMPLE",
-        "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-        "session-token",
-        "us-east-1",
         "20250929T151031Z",
-        None,
-        Some(&query),
-        Some(&extra_headers),
-    )
+        UNSIGNED_PAYLOAD,
+    );
+    insert_header(&mut headers, X_AMZ_ACL, "private")
+        .expect("the ACL should be a valid header value");
+    insert_header(&mut headers, X_AMZ_USER_AGENT, AWS_SDK_USER_AGENT)
+        .expect("the user agent should be a valid header value");
+    let method = Method::PUT;
+    let signature = calculate_aws_s3_v4_signature(&SigningInput {
+        method: &method,
+        canonical_uri: "/uploads/test video.mp4",
+        access_key: "AKIDEXAMPLE",
+        secret_key: "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        region: "us-east-1",
+        query_parameters: &query,
+        headers: &headers,
+    })
     .expect("the signature should be created");
 
-    assert_eq!(credential_scope, "20250929/us-east-1/s3/aws4_request");
     assert_eq!(
-        signed_headers,
+        signature.credential_scope,
+        "20250929/us-east-1/s3/aws4_request"
+    );
+    assert_eq!(
+        signature.signed_headers,
         concat!(
             "host;x-amz-acl;x-amz-content-sha256;x-amz-date;",
             "x-amz-security-token;x-amz-user-agent"
         )
     );
     assert_eq!(
-        authorization,
+        signature.authorization,
         concat!(
             "AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20250929/us-east-1/s3/aws4_request, ",
             "SignedHeaders=host;x-amz-acl;x-amz-content-sha256;x-amz-date;",
@@ -155,9 +169,14 @@ fn signature_sorts_and_encodes_query_and_extra_headers() {
 
 #[test]
 fn upload_headers_match_python_reference_with_initialized_timestamp() {
-    let headers = build_s3_upload_headers(&upload_info(), 42, false)
-        .expect("the upload headers should be created");
+    let request = build_s3_put_at(&upload_info(), 42, "20250929T151031Z")
+        .expect("the signed upload request should be created");
+    let headers = request.headers;
 
+    assert_eq!(
+        request.url.as_str(),
+        "https://example-bucket.s3.amazonaws.com/uploads/test.mp4"
+    );
     assert_eq!(headers.len(), 9);
     assert_eq!(headers["Host"], "example-bucket.s3.amazonaws.com");
     assert_eq!(headers["Content-Type"], "application/octet-stream");
@@ -181,37 +200,22 @@ fn upload_headers_match_python_reference_with_initialized_timestamp() {
 #[test]
 fn upload_headers_can_refresh_the_timestamp() {
     let info = upload_info();
-    let headers =
-        build_s3_upload_headers(&info, 42, true).expect("the upload headers should be created");
-    let timestamp = &headers["x-amz-date"];
+    let request = build_s3_put(&info, 42).expect("the signed upload request should be created");
+    let timestamp = request.headers["x-amz-date"]
+        .to_str()
+        .expect("the timestamp should be valid ASCII");
 
     assert_eq!(timestamp.len(), 16);
     assert!(timestamp.ends_with('Z'));
-    assert_ne!(timestamp, &info.fields.x_amz_date);
+    assert_ne!(timestamp, info.fields.x_amz_date);
 
-    let extra_headers = StringMap::from([
-        ("x-amz-acl".to_string(), info.fields.acl.clone()),
-        (
-            "x-amz-user-agent".to_string(),
-            AWS_SDK_USER_AGENT.to_string(),
-        ),
-    ]);
-    let (expected_authorization, _, _) = calculate_aws_s3_v4_signature(
-        "PUT",
-        "example-bucket.s3.amazonaws.com",
-        "/uploads/test.mp4",
-        &info.credentials.access_key_id,
-        &info.credentials.secret_access_key,
-        &info.credentials.session_token,
-        "eu-west-1",
-        timestamp,
-        Some(UNSIGNED_PAYLOAD),
-        None,
-        Some(&extra_headers),
-    )
-    .expect("the refreshed timestamp should produce a valid signature");
+    let expected = build_s3_put_at(&info, 42, timestamp)
+        .expect("the refreshed timestamp should produce a valid request");
 
-    assert_eq!(headers["Authorization"], expected_authorization);
+    assert_eq!(
+        request.headers["Authorization"],
+        expected.headers["Authorization"]
+    );
 }
 
 #[test]
@@ -219,10 +223,37 @@ fn malformed_credential_returns_a_specific_error() {
     let mut info = upload_info();
     info.fields.x_amz_credential = "AKIDEXAMPLE/20250929".to_string();
 
-    assert_eq!(
-        build_s3_upload_headers(&info, 42, false),
-        Err(S3Error::InvalidCredential {
-            credential: "AKIDEXAMPLE/20250929".to_string()
-        })
-    );
+    assert!(matches!(
+        build_s3_put_at(&info, 42, "20250929T151031Z"),
+        Err(S3Error::InvalidCredential { credential })
+            if credential == "AKIDEXAMPLE/20250929"
+    ));
+}
+
+#[test]
+fn request_url_and_signature_share_the_same_encoded_path() {
+    let mut info = upload_info();
+    info.fields.key = "uploads/café video.mp4".to_string();
+    let request = build_s3_put_at(&info, 42, "20250929T151031Z")
+        .expect("the encoded upload request should be created");
+
+    assert_eq!(request.url.path(), "/uploads/caf%C3%A9%20video.mp4");
+
+    let mut signing_headers = request.headers.clone();
+    signing_headers.remove(AUTHORIZATION);
+    signing_headers.remove(CONTENT_TYPE);
+    signing_headers.remove(CONTENT_LENGTH);
+    let method = Method::PUT;
+    let expected = calculate_aws_s3_v4_signature(&SigningInput {
+        method: &method,
+        canonical_uri: request.url.path(),
+        access_key: &info.credentials.access_key_id,
+        secret_key: &info.credentials.secret_access_key,
+        region: "eu-west-1",
+        query_parameters: &QueryParameters::new(),
+        headers: &signing_headers,
+    })
+    .expect("the URL path should produce the transmitted signature");
+
+    assert_eq!(request.headers[AUTHORIZATION], expected.authorization);
 }

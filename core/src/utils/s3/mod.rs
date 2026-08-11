@@ -1,43 +1,113 @@
-//! AWS S3 Signature Version 4 helpers used by Streamable uploads.
-//!
-//! Streamable returns temporary AWS credentials and upload fields. This module rebuilds the
-//! signed `PUT` headers expected by the target S3 bucket.
-
 use crate::models::UploadInfo;
 use hmac::{Hmac, Mac};
+use reqwest::{
+    Method, Url,
+    header::{
+        AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue,
+    },
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use thiserror::Error;
 use time::{OffsetDateTime, macros::format_description};
 
+#[cfg(test)]
+mod tests;
+
 type HmacSha256 = Hmac<Sha256>;
+type HmacDigest = [u8; 32];
+type QueryParameters = BTreeMap<String, String>;
 
-pub const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
-pub const AWS_SDK_USER_AGENT: &str = "aws-sdk-js/2.1530.0 callback";
+const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
+const AWS_SDK_USER_AGENT: &str = "aws-sdk-js/2.1530.0 callback";
+const AWS_SERVICE: &str = "s3";
+const AWS_REQUEST_TYPE: &str = "aws4_request";
+const X_AMZ_ACL: HeaderName = HeaderName::from_static("x-amz-acl");
+const X_AMZ_CONTENT_SHA256: HeaderName = HeaderName::from_static("x-amz-content-sha256");
+const X_AMZ_DATE: HeaderName = HeaderName::from_static("x-amz-date");
+const X_AMZ_SECURITY_TOKEN: HeaderName = HeaderName::from_static("x-amz-security-token");
+const X_AMZ_USER_AGENT: HeaderName = HeaderName::from_static("x-amz-user-agent");
 
-/// String map used for query parameters, extra signing headers, and completed upload headers.
-pub type StringMap = BTreeMap<String, String>;
-
-/// Errors produced while creating S3 upload headers.
-#[derive(Debug, Error, PartialEq, Eq)]
+/// Errors produced while creating a signed S3 upload request.
+#[derive(Debug, Error)]
 pub enum S3Error {
     #[error("the AWS signing key could not be initialized")]
-    InvalidSigningKey,
+    InvalidSigningKey(#[source] hmac::digest::InvalidLength),
 
     #[error("X-Amz-Credential does not contain a region: {credential}")]
     InvalidCredential { credential: String },
 
     #[error("the current UTC timestamp could not be formatted for AWS")]
-    TimestampFormatting,
+    TimestampFormatting(#[source] time::error::Format),
+
+    #[error("the S3 upload URL could not be constructed")]
+    InvalidUrl(#[source] url::ParseError),
+
+    #[error("invalid value for HTTP header {name}")]
+    InvalidHeaderValue {
+        name: String,
+        #[source]
+        source: reqwest::header::InvalidHeaderValue,
+    },
+
+    #[error("required signing header is missing: {name}")]
+    MissingSigningHeader { name: String },
+
+    #[error("signing header is not valid ASCII: {name}")]
+    NonAsciiSigningHeader {
+        name: String,
+        #[source]
+        source: reqwest::header::ToStrError,
+    },
 }
 
-pub type Result<T> = std::result::Result<T, S3Error>;
+type Result<T> = std::result::Result<T, S3Error>;
 
-fn sign(key: &[u8], message: &str) -> Result<Vec<u8>> {
-    let mut mac = HmacSha256::new_from_slice(key).map_err(|_| S3Error::InvalidSigningKey)?;
+/// Complete HTTP request components for a Streamable S3 upload.
+pub struct SignedS3Put {
+    pub url: Url,
+    pub headers: HeaderMap,
+}
+
+struct CredentialScope<'a> {
+    region: &'a str,
+}
+
+impl<'a> CredentialScope<'a> {
+    fn parse(credential: &'a str) -> Result<Self> {
+        let region = credential
+            .split('/')
+            .nth(2)
+            .filter(|region| !region.is_empty())
+            .ok_or_else(|| S3Error::InvalidCredential {
+                credential: credential.to_string(),
+            })?;
+
+        Ok(Self { region })
+    }
+}
+
+struct SigningInput<'a> {
+    method: &'a Method,
+    canonical_uri: &'a str,
+    access_key: &'a str,
+    secret_key: &'a str,
+    region: &'a str,
+    query_parameters: &'a QueryParameters,
+    headers: &'a HeaderMap,
+}
+
+struct Signature {
+    authorization: String,
+    signed_headers: String,
+    credential_scope: String,
+}
+
+fn sign(key: &[u8], message: &str) -> Result<HmacDigest> {
+    let mut mac = HmacSha256::new_from_slice(key).map_err(S3Error::InvalidSigningKey)?;
     mac.update(message.as_bytes());
-    Ok(mac.finalize().into_bytes().to_vec())
+    Ok(mac.finalize().into_bytes().into())
 }
 
 fn get_signature_key(
@@ -45,16 +115,16 @@ fn get_signature_key(
     date_stamp: &str,
     region: &str,
     service: &str,
-) -> Result<Vec<u8>> {
+) -> Result<HmacDigest> {
     let k_secret = format!("AWS4{secret_key}");
     let k_date = sign(k_secret.as_bytes(), date_stamp)?;
     let k_region = sign(&k_date, region)?;
     let k_service = sign(&k_region, service)?;
-    sign(&k_service, "aws4_request")
+    sign(&k_service, AWS_REQUEST_TYPE)
 }
 
 fn uri_encode(value: &str, encode_slash: bool) -> String {
-    let mut encoded = String::new();
+    let mut encoded = String::with_capacity(value.len());
 
     for byte in value.as_bytes() {
         if byte.is_ascii_alphanumeric()
@@ -71,7 +141,7 @@ fn uri_encode(value: &str, encode_slash: bool) -> String {
 }
 
 fn create_canonical_request(
-    method: &str,
+    method: &Method,
     canonical_uri: &str,
     canonical_query_string: &str,
     canonical_headers: &str,
@@ -79,7 +149,7 @@ fn create_canonical_request(
     payload_hash: &str,
 ) -> String {
     [
-        method,
+        method.as_str(),
         canonical_uri,
         canonical_query_string,
         canonical_headers,
@@ -90,7 +160,7 @@ fn create_canonical_request(
 }
 
 fn encode_hex(bytes: &[u8]) -> String {
-    let mut encoded = String::new();
+    let mut encoded = String::with_capacity(bytes.len().saturating_mul(2));
     for byte in bytes {
         let _ = write!(encoded, "{byte:02x}");
     }
@@ -112,163 +182,148 @@ fn create_string_to_sign(
     .join("\n")
 }
 
-/// Calculates an AWS S3 Signature Version 4 authorization value.
-///
-/// `path` must already have the encoding required by the request URL. Passing `None` for
-/// `payload_hash` selects [`UNSIGNED_PAYLOAD`], matching Streamable's browser upload flow.
-///
-/// # Errors
-///
-/// Returns [`S3Error::InvalidSigningKey`] if the HMAC implementation rejects a signing key.
-#[allow(clippy::too_many_arguments)]
-pub fn calculate_aws_s3_v4_signature(
-    method: &str,
-    host: &str,
-    path: &str,
-    access_key: &str,
-    secret_key: &str,
-    session_token: &str,
-    region: &str,
-    timestamp: &str,
-    payload_hash: Option<&str>,
-    query_params: Option<&StringMap>,
-    extra_headers: Option<&StringMap>,
-) -> Result<(String, String, String)> {
-    let payload_hash = payload_hash.unwrap_or(UNSIGNED_PAYLOAD);
-    let date_stamp = timestamp.chars().take(8).collect::<String>();
-    let credential_scope = format!("{date_stamp}/{region}/s3/aws4_request");
+fn required_header<'a>(headers: &'a HeaderMap, name: &HeaderName) -> Result<&'a str> {
+    headers
+        .get(name)
+        .ok_or_else(|| S3Error::MissingSigningHeader {
+            name: name.as_str().to_string(),
+        })?
+        .to_str()
+        .map_err(|source| S3Error::NonAsciiSigningHeader {
+            name: name.as_str().to_string(),
+            source,
+        })
+}
 
-    let canonical_query_string = query_params.map_or_else(String::new, |parameters| {
-        parameters
-            .iter()
-            .map(|(key, value)| format!("{}={}", uri_encode(key, true), uri_encode(value, true)))
-            .collect::<Vec<_>>()
-            .join("&")
-    });
+fn canonicalize_headers(headers: &HeaderMap) -> Result<(String, String)> {
+    let mut sorted_headers = headers.iter().collect::<Vec<_>>();
+    sorted_headers.sort_unstable_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
 
-    let mut headers = StringMap::from([
-        ("host".to_string(), host.to_string()),
-        ("x-amz-content-sha256".to_string(), payload_hash.to_string()),
-        ("x-amz-date".to_string(), timestamp.to_string()),
-        (
-            "x-amz-security-token".to_string(),
-            session_token.to_string(),
-        ),
-    ]);
+    let mut canonical_headers = String::new();
+    let mut signed_headers = String::new();
 
-    if let Some(extra_headers) = extra_headers {
-        for (name, value) in extra_headers {
-            headers.insert(name.to_lowercase(), value.clone());
+    for (index, (name, value)) in sorted_headers.into_iter().enumerate() {
+        let value = value
+            .to_str()
+            .map_err(|source| S3Error::NonAsciiSigningHeader {
+                name: name.as_str().to_string(),
+                source,
+            })?;
+        let _ = writeln!(canonical_headers, "{}:{}", name.as_str(), value.trim());
+        if index != 0 {
+            signed_headers.push(';');
         }
+        signed_headers.push_str(name.as_str());
     }
 
-    let canonical_headers = headers
+    Ok((canonical_headers, signed_headers))
+}
+
+fn calculate_aws_s3_v4_signature(input: &SigningInput<'_>) -> Result<Signature> {
+    let timestamp = required_header(input.headers, &X_AMZ_DATE)?;
+    let payload_hash = required_header(input.headers, &X_AMZ_CONTENT_SHA256)?;
+    let date_stamp = timestamp.chars().take(8).collect::<String>();
+    let credential_scope = format!(
+        "{date_stamp}/{}/{AWS_SERVICE}/{AWS_REQUEST_TYPE}",
+        input.region
+    );
+    let canonical_query_string = input
+        .query_parameters
         .iter()
-        .fold(String::new(), |mut output, (name, value)| {
-            let _ = writeln!(output, "{}:{}", name, value.trim());
-            output
-        });
-    let signed_headers = headers.keys().cloned().collect::<Vec<_>>().join(";");
+        .map(|(key, value)| format!("{}={}", uri_encode(key, true), uri_encode(value, true)))
+        .collect::<Vec<_>>()
+        .join("&");
+    let (canonical_headers, signed_headers) = canonicalize_headers(input.headers)?;
     let canonical_request = create_canonical_request(
-        method,
-        path,
+        input.method,
+        input.canonical_uri,
         &canonical_query_string,
         &canonical_headers,
         &signed_headers,
         payload_hash,
     );
     let string_to_sign = create_string_to_sign(timestamp, &credential_scope, &canonical_request);
-    let signing_key = get_signature_key(secret_key, &date_stamp, region, "s3")?;
+    let signing_key = get_signature_key(input.secret_key, &date_stamp, input.region, AWS_SERVICE)?;
     let signature = encode_hex(&sign(&signing_key, &string_to_sign)?);
-    let authorization_header = format!(
-        "AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}"
+    let authorization = format!(
+        "AWS4-HMAC-SHA256 Credential={}/{credential_scope}, SignedHeaders={signed_headers}, Signature={signature}",
+        input.access_key
     );
 
-    Ok((authorization_header, signed_headers, credential_scope))
+    Ok(Signature {
+        authorization,
+        signed_headers,
+        credential_scope,
+    })
 }
 
-/// Builds the complete header map for uploading a Streamable video to S3 with `PUT`.
-///
-/// When `use_current_timestamp` is `true`, the returned signature uses the current UTC time.
-/// Actual uploads must use that setting because the timestamp supplied during initialization may
-/// have expired.
+fn insert_header(headers: &mut HeaderMap, name: HeaderName, value: &str) -> Result<()> {
+    let header_value =
+        HeaderValue::from_str(value).map_err(|source| S3Error::InvalidHeaderValue {
+            name: name.as_str().to_string(),
+            source,
+        })?;
+    headers.insert(name, header_value);
+    Ok(())
+}
+
+/// Builds a signed `PUT` request for uploading a Streamable video to S3.
 ///
 /// # Errors
 ///
-/// Returns [`S3Error::InvalidCredential`] if `X-Amz-Credential` has no region,
-/// [`S3Error::TimestampFormatting`] if the current UTC time cannot be formatted, or
-/// [`S3Error::InvalidSigningKey`] if the HMAC implementation rejects a signing key.
-pub fn build_s3_upload_headers(
-    upload_info: &UploadInfo,
-    content_length: u64,
-    use_current_timestamp: bool,
-) -> Result<StringMap> {
-    let credentials = &upload_info.credentials;
-    let fields = &upload_info.fields;
-    let host = format!("{}.s3.amazonaws.com", upload_info.bucket);
-    let path = format!("/{}", fields.key);
-    let region = fields
-        .x_amz_credential
-        .split('/')
-        .nth(2)
-        .filter(|region| !region.is_empty())
-        .ok_or_else(|| S3Error::InvalidCredential {
-            credential: fields.x_amz_credential.clone(),
-        })?;
-    let timestamp = if use_current_timestamp {
-        OffsetDateTime::now_utc()
-            .format(format_description!(
-                "[year][month][day]T[hour][minute][second]Z"
-            ))
-            .map_err(|_| S3Error::TimestampFormatting)?
-    } else {
-        fields.x_amz_date.clone()
-    };
-    let extra_headers = StringMap::from([
-        ("x-amz-acl".to_string(), fields.acl.clone()),
-        (
-            "x-amz-user-agent".to_string(),
-            AWS_SDK_USER_AGENT.to_string(),
-        ),
-    ]);
-    let (authorization, _, _) = calculate_aws_s3_v4_signature(
-        "PUT",
-        &host,
-        &path,
-        &credentials.access_key_id,
-        &credentials.secret_access_key,
-        &credentials.session_token,
-        region,
-        &timestamp,
-        Some(UNSIGNED_PAYLOAD),
-        None,
-        Some(&extra_headers),
-    )?;
+/// Returns [`S3Error`] when Streamable's upload fields cannot be converted into a valid signed
+/// request.
+pub fn build_s3_put(upload_info: &UploadInfo, content_length: u64) -> Result<SignedS3Put> {
+    let timestamp = OffsetDateTime::now_utc()
+        .format(format_description!(
+            "[year][month][day]T[hour][minute][second]Z"
+        ))
+        .map_err(S3Error::TimestampFormatting)?;
 
-    Ok(StringMap::from([
-        ("Host".to_string(), host),
-        ("Authorization".to_string(), authorization),
-        (
-            "Content-Type".to_string(),
-            "application/octet-stream".to_string(),
-        ),
-        ("Content-Length".to_string(), content_length.to_string()),
-        (
-            "x-amz-content-sha256".to_string(),
-            UNSIGNED_PAYLOAD.to_string(),
-        ),
-        ("x-amz-date".to_string(), timestamp),
-        (
-            "x-amz-security-token".to_string(),
-            credentials.session_token.clone(),
-        ),
-        ("x-amz-acl".to_string(), fields.acl.clone()),
-        (
-            "x-amz-user-agent".to_string(),
-            AWS_SDK_USER_AGENT.to_string(),
-        ),
-    ]))
+    build_s3_put_at(upload_info, content_length, &timestamp)
 }
 
-#[cfg(test)]
-mod tests;
+fn build_s3_put_at(
+    upload_info: &UploadInfo,
+    content_length: u64,
+    timestamp: &str,
+) -> Result<SignedS3Put> {
+    let credentials = &upload_info.credentials;
+    let fields = &upload_info.fields;
+    let credential_scope = CredentialScope::parse(&fields.x_amz_credential)?;
+    let host = format!("{}.s3.amazonaws.com", upload_info.bucket);
+    let mut url = Url::parse(&format!("https://{host}")).map_err(S3Error::InvalidUrl)?;
+    url.set_path(&fields.key);
+
+    // These are the exact headers included in the signature. The same values remain in the
+    // returned map, preventing signed and transmitted headers from diverging.
+    let mut headers = HeaderMap::with_capacity(9);
+    insert_header(&mut headers, HOST, &host)?;
+    insert_header(&mut headers, X_AMZ_CONTENT_SHA256, UNSIGNED_PAYLOAD)?;
+    insert_header(&mut headers, X_AMZ_DATE, timestamp)?;
+    insert_header(
+        &mut headers,
+        X_AMZ_SECURITY_TOKEN,
+        &credentials.session_token,
+    )?;
+    insert_header(&mut headers, X_AMZ_ACL, &fields.acl)?;
+    insert_header(&mut headers, X_AMZ_USER_AGENT, AWS_SDK_USER_AGENT)?;
+
+    let method = Method::PUT;
+    let query_parameters = QueryParameters::new();
+    let signature = calculate_aws_s3_v4_signature(&SigningInput {
+        method: &method,
+        canonical_uri: url.path(),
+        access_key: &credentials.access_key_id,
+        secret_key: &credentials.secret_access_key,
+        region: credential_scope.region,
+        query_parameters: &query_parameters,
+        headers: &headers,
+    })?;
+
+    insert_header(&mut headers, AUTHORIZATION, &signature.authorization)?;
+    insert_header(&mut headers, CONTENT_TYPE, "application/octet-stream")?;
+    insert_header(&mut headers, CONTENT_LENGTH, &content_length.to_string())?;
+
+    Ok(SignedS3Put { url, headers })
+}
