@@ -4,6 +4,9 @@ version = "0.0.1"
 edition = "2024"
 description = "CLI for interacting with the streamable.com API"
 
+[lints]
+workspace = true
+
 [dependencies]
 streamable-rs = { path = "../core" }
 tokio = { version = "1.53.1", features = ["full"] }
