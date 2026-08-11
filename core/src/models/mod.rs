@@ -515,7 +515,6 @@ pub(crate) struct Credentials {
 #[allow(dead_code)]
 pub(crate) struct Fields {
     pub(crate) key: String,
-    pub(crate) acl: String,
     pub(crate) bucket: String,
     #[serde(rename = "X-Amz-Algorithm")]
     pub(crate) x_amz_algorithm: String,
@@ -553,7 +552,7 @@ pub(crate) struct Options {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub(crate) struct TranscoderOptions {
-    pub(crate) url: String,
+    pub(crate) key: String,
     pub(crate) token: String,
     pub(crate) shortcode: String,
     pub(crate) size: u64,

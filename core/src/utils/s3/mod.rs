@@ -23,7 +23,6 @@ const UNSIGNED_PAYLOAD: &str = "UNSIGNED-PAYLOAD";
 const AWS_SDK_USER_AGENT: &str = "aws-sdk-js/2.1530.0 callback";
 const AWS_SERVICE: &str = "s3";
 const AWS_REQUEST_TYPE: &str = "aws4_request";
-const X_AMZ_ACL: HeaderName = HeaderName::from_static("x-amz-acl");
 const X_AMZ_CONTENT_SHA256: HeaderName = HeaderName::from_static("x-amz-content-sha256");
 const X_AMZ_DATE: HeaderName = HeaderName::from_static("x-amz-date");
 const X_AMZ_SECURITY_TOKEN: HeaderName = HeaderName::from_static("x-amz-security-token");
@@ -297,7 +296,7 @@ fn build_s3_put_at(
 
     // These are the exact headers included in the signature. The same values remain in the
     // returned map, preventing signed and transmitted headers from diverging.
-    let mut headers = HeaderMap::with_capacity(9);
+    let mut headers = HeaderMap::with_capacity(8);
     insert_header(&mut headers, HOST, &host)?;
     insert_header(&mut headers, X_AMZ_CONTENT_SHA256, UNSIGNED_PAYLOAD)?;
     insert_header(&mut headers, X_AMZ_DATE, timestamp)?;
@@ -306,7 +305,6 @@ fn build_s3_put_at(
         X_AMZ_SECURITY_TOKEN,
         &credentials.session_token,
     )?;
-    insert_header(&mut headers, X_AMZ_ACL, &fields.acl)?;
     insert_header(&mut headers, X_AMZ_USER_AGENT, AWS_SDK_USER_AGENT)?;
 
     let method = Method::PUT;

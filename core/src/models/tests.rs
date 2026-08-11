@@ -71,7 +71,6 @@ fn upload_info_preserves_aws_wire_names() {
         },
         "fields": {
             "key": "key",
-            "acl": "private",
             "bucket": "bucket",
             "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
             "X-Amz-Credential": "access/20250929/eu-west-1/s3/aws4_request",
@@ -92,7 +91,7 @@ fn upload_info_preserves_aws_wire_names() {
         "time": 1,
         "transcoder": null,
         "transcoder_options": {
-            "url": "transcoder-url",
+            "key": "key",
             "token": "token",
             "shortcode": "abc",
             "size": 42
@@ -110,4 +109,5 @@ fn upload_info_preserves_aws_wire_names() {
     );
     assert_eq!(serialized["fields"]["X-Amz-Security-Token"], "session");
     assert_eq!(serialized["fields"]["Policy"], "policy");
+    assert_eq!(serialized["transcoder_options"]["key"], "key");
 }
