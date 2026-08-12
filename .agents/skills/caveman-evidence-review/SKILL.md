@@ -1,11 +1,11 @@
 ---
 name: caveman-evidence-review
 description: >
-  Review Caveman Cloud evidence read-only: costs, Cave Score, Cave Plan,
-  workflows, traces, latency, errors, compression, routing, and verified
-  savings. Use when the user asks what Caveman found, where LLM spend goes,
-  why cost or quality changed, which workflows need attention, or asks for a
-  trace or analytics review. Prefer Caveman MCP tools; fall back to CLI JSON.
+    Review Caveman Cloud evidence read-only: costs, Cave Score, Cave Plan,
+    workflows, traces, latency, errors, compression, routing, and verified
+    savings. Use when the user asks what Caveman found, where LLM spend goes,
+    why cost or quality changed, which workflows need attention, or asks for a
+    trace or analytics review. Prefer Caveman MCP tools; fall back to CLI JSON.
 ---
 
 # Review Caveman evidence
@@ -17,11 +17,11 @@ experiment from this skill.
 ## Hard rules
 
 1. Keep these buckets separate:
-   - measured provider-complete list-price cost;
-   - `inferred` daily headroom;
-   - `verified` ledger savings;
-   - evidence cost.
-   Never add or relabel them.
+    - measured provider-complete list-price cost;
+    - `inferred` daily headroom;
+    - `verified` ledger savings;
+    - evidence cost.
+      Never add or relabel them.
 2. Do not fetch prompt, completion, tool, or artifact payloads unless the user
    explicitly asks for payload review. Metadata, spans, timing, models, token
    counts, status, and optimizer attribution are enough for the default review.

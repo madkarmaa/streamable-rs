@@ -1,16 +1,16 @@
 ---
 name: caveman-discover
 description: >
-  Find every LLM workflow in the current repository and label it, so Caveman
-  Cloud groups spend by what the code actually does (support-reply,
-  nightly-digest) instead of one anonymous bucket. Use when the user pastes
-  the Caveman discovery prompt, says "discover workflows", or asks to break
-  LLM spend down by workflow. The repo should already route through the
-  Caveman gateway (the caveman-setup skill does that part).
+    Find every LLM workflow in the current repository and label it, so Caveman
+    Cloud groups spend by what the code actually does (support-reply,
+    nightly-digest) instead of one anonymous bucket. Use when the user pastes
+    the Caveman discovery prompt, says "discover workflows", or asks to break
+    LLM spend down by workflow. The repo should already route through the
+    Caveman gateway (the caveman-setup skill does that part).
 ---
 
 You are labeling this repository's LLM workflows for Caveman Cloud. A
-*workflow* is a job the code performs — "answer a support ticket", "build the
+_workflow_ is a job the code performs — "answer a support ticket", "build the
 nightly digest", "run the eval suite" — not a technology. Every gateway
 request can carry a workflow label; unlabeled traffic all lands in one
 `unlabeled-workflow` bucket. Your job: find the workflows, name them well,
