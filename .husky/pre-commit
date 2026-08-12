@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+cargo fmt --all -- --check
+cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
