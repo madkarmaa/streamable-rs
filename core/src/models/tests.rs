@@ -1,7 +1,27 @@
 use super::{
-    ChangePasswordRequest, CreateLabelRequest, PrivacySettingsRequest, RenameLabelRequest,
-    UploadInfo, Visibility,
+    CancelVideoUploadRequest, ChangePasswordRequest, CreateLabelRequest, CreateUserRequest,
+    InitializeVideoUploadRequest, PrivacySettingsRequest, RenameLabelRequest,
+    TranscodeVideoRequest, UploadInfo, Visibility,
 };
+
+#[test]
+fn create_user_request_serializes_static_verification_redirect() {
+    let request = CreateUserRequest::new(
+        "user@example.com".to_string(),
+        "Password1".to_string(),
+        "user".to_string(),
+    );
+
+    assert_eq!(
+        serde_json::to_value(request).expect("create user request should serialize"),
+        serde_json::json!({
+            "email": "user@example.com",
+            "password": "Password1",
+            "username": "user",
+            "verification_redirect": "https://streamable.com?alert=verified"
+        })
+    );
+}
 
 #[test]
 fn visibility_serializes_as_lowercase_strings() {
@@ -110,4 +130,73 @@ fn upload_info_preserves_aws_wire_names() {
     assert_eq!(serialized["fields"]["X-Amz-Security-Token"], "session");
     assert_eq!(serialized["fields"]["Policy"], "policy");
     assert_eq!(serialized["transcoder_options"]["key"], "key");
+}
+
+#[test]
+fn upload_flow_requests_preserve_live_web_fields() {
+    let initialize =
+        InitializeVideoUploadRequest::new("abc", 42, "video.webm".to_string(), "video".to_string());
+    assert_eq!(
+        serde_json::to_value(initialize).expect("initialize request should serialize"),
+        serde_json::json!({
+            "original_size": 42,
+            "original_name": "video.webm",
+            "upload_source": "web",
+            "title": "video"
+        })
+    );
+
+    let upload_info: UploadInfo = serde_json::from_value(serde_json::json!({
+        "accelerated": false,
+        "bucket": "bucket",
+        "credentials": {
+            "accessKeyId": "access",
+            "secretAccessKey": "secret",
+            "sessionToken": "session"
+        },
+        "fields": {
+            "key": "upload/abc",
+            "bucket": "bucket",
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": "access/20260812/us-east-1/s3/aws4_request",
+            "X-Amz-Date": "20260812T100000Z",
+            "X-Amz-Security-Token": "session",
+            "Policy": "policy",
+            "X-Amz-Signature": "signature"
+        },
+        "url": "url",
+        "video": {
+            "shortcode": "abc",
+            "date_added": 1,
+            "url": "video-url"
+        },
+        "options": { "preset": "mp4", "shortcode": "abc", "screenshot": true },
+        "shortcode": "abc",
+        "key": "upload/abc",
+        "time": 1,
+        "transcoder": null,
+        "transcoder_options": {
+            "key": "upload/abc",
+            "token": "token",
+            "shortcode": "abc",
+            "size": 42
+        }
+    }))
+    .expect("upload info should deserialize");
+    let cancellation = CancelVideoUploadRequest::new("abc");
+    assert_eq!(
+        serde_json::to_value(cancellation).expect("cancellation request should serialize"),
+        serde_json::json!({})
+    );
+    assert_eq!(
+        serde_json::to_value(TranscodeVideoRequest::new(&upload_info))
+            .expect("transcode request should serialize"),
+        serde_json::json!({
+            "upload_source": "web",
+            "key": "upload/abc",
+            "token": "token",
+            "shortcode": "abc",
+            "size": 42
+        })
+    );
 }
