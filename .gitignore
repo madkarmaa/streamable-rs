@@ -24,5 +24,8 @@ rustc-ice-*.txt
 .idea/
 
 .codex
-requests/
+
+node_modules/
+
 dump/
+tmp/
