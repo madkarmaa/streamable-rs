@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// Errors returned by the Streamable API client.
@@ -31,6 +32,22 @@ pub enum StreamableError {
     /// Streamable rejected the request because the endpoint rate limit was exceeded.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded { endpoint: String },
+
+    /// The requested upload path is not a recognized video file.
+    #[error("Path '{}' is not a valid video file", path.display())]
+    InvalidVideoFile { path: PathBuf },
+
+    /// Streamable's temporary S3 configuration could not be signed.
+    #[error("the S3 upload request could not be signed: {message}")]
+    UploadSigning { message: String },
+
+    /// The caller cancelled a video upload.
+    #[error("video upload was cancelled")]
+    UploadCancelled { shortcode: Option<String> },
+
+    /// A local file operation failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 
     /// The HTTP request failed.
     #[error(transparent)]

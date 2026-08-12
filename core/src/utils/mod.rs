@@ -8,7 +8,6 @@ use std::path::Path;
 #[cfg(test)]
 mod tests;
 
-#[allow(dead_code)]
 pub(crate) mod s3;
 
 const LOWERCASE: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
@@ -64,9 +63,11 @@ pub fn generate_random_password() -> String {
 
 #[must_use]
 pub fn is_video_file(path: &Path) -> bool {
-    FileFormat::from_file(path).is_ok_and(|format| {
-        matches!(format.kind(), Kind::Video) || format == FileFormat::SmallWebFormat
-    }) || is_raw_hevc(path)
+    path.is_file()
+        && FileFormat::from_file(path).is_ok_and(|format| {
+            matches!(format.kind(), Kind::Video) || format == FileFormat::SmallWebFormat
+        })
+        || is_raw_hevc(path)
 }
 
 fn is_raw_hevc(path: &Path) -> bool {

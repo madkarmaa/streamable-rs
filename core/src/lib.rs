@@ -7,7 +7,7 @@ pub mod utils;
 
 pub use client::{
     Authenticated, AuthenticatedStreamableClient, StreamableClient, Unauthenticated,
-    UnauthenticatedStreamableClient,
+    UnauthenticatedStreamableClient, UploadCancellationToken,
 };
 pub use errors::{Result, StreamableError};
 pub use response::ApiResponse;

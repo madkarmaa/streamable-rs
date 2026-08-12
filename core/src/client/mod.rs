@@ -1,12 +1,19 @@
 use crate::{
-    constants::{API_BASE_URL, AUTH_BASE_URL},
+    constants::AUTH_BASE_URL,
     errors::{Result, StreamableError},
     models::{self, ApiRequest},
     response::ApiResponse,
     utils,
 };
 use reqwest::cookie::{CookieStore, Jar};
-use std::sync::Arc;
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+use tokio::sync::Notify;
 use url::Url;
 
 #[cfg(test)]
@@ -49,12 +56,95 @@ pub type UnauthenticatedStreamableClient = StreamableClient<Unauthenticated>;
 /// ```
 pub type AuthenticatedStreamableClient = StreamableClient<Authenticated>;
 
+/// Cooperative cancellation token for an in-flight video upload.
+///
+/// Clone this token before starting [`StreamableClient::upload_video_with_cancellation`], then call
+/// [`UploadCancellationToken::cancel`] from another task. Cancellation aborts the current request
+/// and, after Streamable assigns a shortcode, reports cancellation to Streamable.
+#[derive(Clone, Debug)]
+pub struct UploadCancellationToken {
+    inner: Arc<UploadCancellationState>,
+}
+
+#[derive(Debug)]
+struct UploadCancellationState {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
+impl UploadCancellationToken {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(UploadCancellationState {
+                cancelled: AtomicBool::new(false),
+                notify: Notify::new(),
+            }),
+        }
+    }
+
+    pub fn cancel(&self) {
+        if !self.inner.cancelled.swap(true, Ordering::AcqRel) {
+            self.inner.notify.notify_waiters();
+        }
+    }
+
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.inner.cancelled.load(Ordering::Acquire)
+    }
+
+    async fn cancelled(&self) {
+        let notified = self.inner.notify.notified();
+        if self.is_cancelled() {
+            return;
+        }
+        notified.await;
+    }
+}
+
+impl Default for UploadCancellationToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug)]
+enum EndpointRouting {
+    Production,
+    #[cfg(test)]
+    Override(Url),
+}
+
+impl EndpointRouting {
+    fn resolve(&self, url: &str) -> Result<Url> {
+        let requested_url = Url::parse(url)?;
+        match self {
+            Self::Production => Ok(requested_url),
+            #[cfg(test)]
+            Self::Override(endpoint_url) => {
+                let mut endpoint_url = endpoint_url.clone();
+                endpoint_url.set_path(requested_url.path());
+                endpoint_url.set_query(requested_url.query());
+                Ok(endpoint_url)
+            }
+        }
+    }
+
+    const fn override_url(&self) -> Option<&Url> {
+        match self {
+            Self::Production => None,
+            #[cfg(test)]
+            Self::Override(url) => Some(url),
+        }
+    }
+}
+
 /// Streamable API client.
 pub struct StreamableClient<State = Unauthenticated> {
     client: reqwest::Client,
     cookie_jar: Arc<Jar>,
-    auth_base_url: Url,
-    api_base_url: Url,
+    endpoint_routing: EndpointRouting,
     state: State,
 }
 
@@ -63,12 +153,17 @@ impl StreamableClient<Unauthenticated> {
     ///
     /// # Errors
     ///
-    /// Returns an error when a base URL is invalid or the HTTP client cannot be built.
+    /// Returns an error when the HTTP client cannot be built.
     pub fn new() -> Result<Self> {
-        Self::with_base_urls(Url::parse(AUTH_BASE_URL)?, Url::parse(API_BASE_URL)?)
+        Self::with_endpoint_routing(EndpointRouting::Production)
     }
 
-    fn with_base_urls(auth_base_url: Url, api_base_url: Url) -> Result<Self> {
+    #[cfg(test)]
+    fn with_base_url(base_url: Url) -> Result<Self> {
+        Self::with_endpoint_routing(EndpointRouting::Override(base_url))
+    }
+
+    fn with_endpoint_routing(endpoint_routing: EndpointRouting) -> Result<Self> {
         let cookie_jar = Arc::new(Jar::default());
         let client = reqwest::Client::builder()
             .cookie_provider(Arc::clone(&cookie_jar))
@@ -77,8 +172,7 @@ impl StreamableClient<Unauthenticated> {
         Ok(Self {
             client,
             cookie_jar,
-            auth_base_url,
-            api_base_url,
+            endpoint_routing,
             state: Unauthenticated { user: None },
         })
     }
@@ -162,8 +256,7 @@ impl StreamableClient<Unauthenticated> {
         StreamableClient {
             client: self.client,
             cookie_jar: self.cookie_jar,
-            auth_base_url: self.auth_base_url,
-            api_base_url: self.api_base_url,
+            endpoint_routing: self.endpoint_routing,
             state: Authenticated { user },
         }
     }
@@ -268,7 +361,7 @@ impl StreamableClient<Authenticated> {
     ///
     /// Returns an error when the replacement HTTP client cannot be built.
     pub fn logout(self) -> Result<UnauthenticatedStreamableClient> {
-        StreamableClient::with_base_urls(self.auth_base_url, self.api_base_url)
+        StreamableClient::with_endpoint_routing(self.endpoint_routing)
     }
 
     async fn execute_and_update_user<Req>(
@@ -285,7 +378,7 @@ impl StreamableClient<Authenticated> {
     fn session_cookie(&self) -> Result<String> {
         let cookies = self
             .cookie_jar
-            .cookies(&self.auth_base_url)
+            .cookies(&self.endpoint_routing.resolve(AUTH_BASE_URL)?)
             .ok_or_else(|| StreamableError::InvalidSession {
                 message: "No session cookie found. Are you logged in?".to_string(),
             })?;
@@ -310,25 +403,170 @@ impl StreamableClient<Authenticated> {
 }
 
 impl<State: Sync> StreamableClient<State> {
+    /// Uploads a local video and starts Streamable transcoding.
+    ///
+    /// **Note**: The title defaults to the file stem.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the path cannot be read, is not a recognized video, any API or S3
+    /// request fails, the upload configuration cannot be signed, or a response cannot be decoded.
+    pub async fn upload_video(&self, video_file: impl AsRef<Path>) -> Result<models::Video> {
+        self.upload_video_with_cancellation(video_file, UploadCancellationToken::new())
+            .await
+    }
+
+    /// Uploads a local video with cooperative cancellation.
+    ///
+    /// Calling [`UploadCancellationToken::cancel`] aborts the active upload request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StreamableError::UploadCancelled`] after successful cancellation, or another
+    /// request, file, signing, or response error when that operation fails.
+    pub async fn upload_video_with_cancellation(
+        &self,
+        video_file: impl AsRef<Path>,
+        cancellation: UploadCancellationToken,
+    ) -> Result<models::Video> {
+        let video_file = tokio::fs::canonicalize(video_file.as_ref()).await?;
+        let metadata = tokio::fs::metadata(&video_file).await?;
+
+        if !utils::is_video_file(&video_file) {
+            return Err(StreamableError::InvalidVideoFile { path: video_file });
+        }
+
+        let original_name = video_file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| StreamableError::InvalidVideoFile {
+                path: video_file.clone(),
+            })?;
+
+        let title = video_file
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .ok_or_else(|| StreamableError::InvalidVideoFile {
+                path: video_file.clone(),
+            })?;
+
+        let size = metadata.len();
+
+        let upload_info = self.generate_shortcode(size, &cancellation).await?;
+        self.initialize_video_upload(&upload_info, size, original_name, title, &cancellation)
+            .await?;
+        self.upload_video_file_to_s3(&upload_info, size, &video_file, &cancellation)
+            .await?;
+        self.transcode_video_after_upload(&upload_info, &cancellation)
+            .await
+    }
+
+    /// Cancels an upload already known by its Streamable shortcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the cancellation request fails or Streamable rejects it.
+    pub async fn cancel_video_upload(&self, shortcode: &str) -> Result<()> {
+        self.execute(&models::CancelVideoUploadRequest::new(shortcode))
+            .await
+    }
+
+    async fn generate_shortcode(
+        &self,
+        size: u64,
+        cancellation: &UploadCancellationToken,
+    ) -> Result<models::UploadInfo> {
+        let request = models::ShortcodeRequest::new(size);
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => Err(StreamableError::UploadCancelled { shortcode: None }),
+            result = self.execute(&request) => result,
+        }
+    }
+
+    async fn initialize_video_upload(
+        &self,
+        upload_info: &models::UploadInfo,
+        size: u64,
+        original_name: String,
+        title: String,
+        cancellation: &UploadCancellationToken,
+    ) -> Result<()> {
+        let shortcode = &upload_info.shortcode;
+        let request =
+            models::InitializeVideoUploadRequest::new(shortcode, size, original_name, title);
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => self.cancel_initialized_upload(shortcode).await,
+            result = self.execute(&request) => result,
+        }
+    }
+
+    async fn upload_video_file_to_s3(
+        &self,
+        upload_info: &models::UploadInfo,
+        size: u64,
+        video_file: &Path,
+        cancellation: &UploadCancellationToken,
+    ) -> Result<()> {
+        let signed_put = self
+            .endpoint_routing
+            .override_url()
+            .map_or_else(
+                || utils::s3::build_s3_put(upload_info, size),
+                |base_url| utils::s3::build_s3_put_for_base_url(upload_info, size, base_url),
+            )
+            .map_err(|error| StreamableError::UploadSigning {
+                message: error.to_string(),
+            })?;
+
+        let file = tokio::fs::File::open(video_file).await?;
+
+        let upload = async {
+            self.client
+                .put(signed_put.url)
+                .headers(signed_put.headers)
+                .body(reqwest::Body::from(file))
+                .send()
+                .await?
+                .error_for_status()?;
+            Ok(())
+        };
+
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => self.cancel_initialized_upload(&upload_info.shortcode).await,
+            result = upload => result,
+        }
+    }
+
+    async fn transcode_video_after_upload(
+        &self,
+        upload_info: &models::UploadInfo,
+        cancellation: &UploadCancellationToken,
+    ) -> Result<models::Video> {
+        let request = models::TranscodeVideoRequest::new(upload_info);
+        tokio::select! {
+            biased;
+            () = cancellation.cancelled() => self.cancel_initialized_upload(&upload_info.shortcode).await,
+            result = self.execute(&request) => result,
+        }
+    }
+
+    async fn cancel_initialized_upload<T>(&self, shortcode: &str) -> Result<T> {
+        self.cancel_video_upload(shortcode).await?;
+        Err(StreamableError::UploadCancelled {
+            shortcode: Some(shortcode.to_string()),
+        })
+    }
+
     async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
     where
         Req: ApiRequest + Sync,
     {
-        let request_url = Url::parse(req.url())?;
-        let mut endpoint_url = if req.url().starts_with(API_BASE_URL) {
-            self.api_base_url.clone()
-        } else {
-            self.auth_base_url.clone()
-        };
-        endpoint_url.set_path(request_url.path());
-        endpoint_url.set_query(request_url.query());
-
+        let endpoint_url = self.endpoint_routing.resolve(req.url())?;
         let request = self.client.request(req.method(), endpoint_url.clone());
-        let request = if req.has_json_body() {
-            request.json(req)
-        } else {
-            request
-        };
+        let request = req.prepare_request(request);
         let response = request.send().await?;
 
         let status = response.status();

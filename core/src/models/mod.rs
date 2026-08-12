@@ -1,12 +1,13 @@
 use crate::constants::{
-    CHANGE_PASSWORD_URL, LABELS_URL, LOGIN_URL, ME_URL, REGISTER_URL, SETTINGS_URL,
+    API_BASE_URL, CHANGE_PASSWORD_URL, LABELS_URL, LOGIN_URL, ME_URL, REGISTER_URL, SETTINGS_URL,
+    UPLOAD_SHORTCODE_URL,
 };
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
 };
 use reqwest::StatusCode;
-use serde::{Deserialize, Serialize, de::DeserializeOwned, ser::SerializeStruct};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::marker::PhantomData;
 
 #[cfg(test)]
@@ -20,8 +21,8 @@ pub trait ApiRequest: Serialize {
 
     fn method(&self) -> reqwest::Method;
 
-    fn has_json_body(&self) -> bool {
-        true
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request.json(self)
     }
 
     /// Decodes the HTTP response expected by this request.
@@ -98,8 +99,8 @@ where
         reqwest::Method::GET
     }
 
-    fn has_json_body(&self) -> bool {
-        false
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -111,11 +112,17 @@ where
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserRequest {
     pub email: String,
     pub password: String,
     pub username: String,
+    #[serde(skip_deserializing, default = "verification_redirect")]
+    verification_redirect: &'static str,
+}
+
+const fn verification_redirect() -> &'static str {
+    "https://streamable.com?alert=verified"
 }
 
 impl CreateUserRequest {
@@ -125,24 +132,8 @@ impl CreateUserRequest {
             email,
             password,
             username,
+            verification_redirect: verification_redirect(),
         }
-    }
-}
-
-impl Serialize for CreateUserRequest {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut request = serializer.serialize_struct("CreateUserRequest", 4)?;
-        request.serialize_field("email", &self.email)?;
-        request.serialize_field("password", &self.password)?;
-        request.serialize_field("username", &self.username)?;
-        request.serialize_field(
-            "verification_redirect",
-            "https://streamable.com?alert=verified",
-        )?;
-        request.end()
     }
 }
 
@@ -353,8 +344,8 @@ impl ApiRequest for DeleteLabelRequest {
         reqwest::Method::DELETE
     }
 
-    fn has_json_body(&self) -> bool {
-        false
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -503,7 +494,6 @@ impl ApiRequest for PrivacySettingsRequest {
 /// Temporary AWS credentials returned for an S3 upload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)]
 pub(crate) struct Credentials {
     pub(crate) access_key_id: String,
     pub(crate) secret_access_key: String,
@@ -512,7 +502,6 @@ pub(crate) struct Credentials {
 
 /// S3 form fields returned while initializing an upload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub(crate) struct Fields {
     pub(crate) key: String,
     pub(crate) bucket: String,
@@ -530,18 +519,24 @@ pub(crate) struct Fields {
     pub(crate) x_amz_signature: String,
 }
 
-/// Video metadata returned while initializing an upload.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
-pub(crate) struct Video {
-    pub(crate) shortcode: String,
-    pub(crate) date_added: i64,
-    pub(crate) url: String,
+/// Video metadata returned after Streamable accepts or processes an upload.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Video {
+    pub shortcode: String,
+    #[serde(default)]
+    pub status: u8,
+    #[serde(default)]
+    pub percent: u8,
+    pub date_added: i64,
+    pub url: String,
+    pub original_name: Option<String>,
+    pub duration: Option<f64>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
 }
 
 /// Video processing options returned while initializing an upload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub(crate) struct Options {
     pub(crate) preset: String,
     pub(crate) shortcode: String,
@@ -550,7 +545,6 @@ pub(crate) struct Options {
 
 /// Transcoder configuration returned while initializing an upload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
 pub(crate) struct TranscoderOptions {
     pub(crate) key: String,
     pub(crate) token: String,
@@ -559,8 +553,7 @@ pub(crate) struct TranscoderOptions {
 }
 
 /// Complete S3 upload configuration returned by Streamable.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct UploadInfo {
     pub(crate) accelerated: bool,
     pub(crate) bucket: String,
@@ -574,4 +567,172 @@ pub(crate) struct UploadInfo {
     pub(crate) time: i64,
     pub(crate) transcoder: Option<String>,
     pub(crate) transcoder_options: TranscoderOptions,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ShortcodeRequest {
+    #[serde(skip)]
+    url: String,
+}
+
+impl ShortcodeRequest {
+    pub(crate) fn new(size: u64) -> Self {
+        Self {
+            url: format!("{UPLOAD_SHORTCODE_URL}?size={size}&version=unknown"),
+        }
+    }
+}
+
+impl ApiRequest for ShortcodeRequest {
+    type Response = UploadInfo;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::GET
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        response.json()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct InitializeVideoUploadRequest {
+    #[serde(skip)]
+    url: String,
+    original_size: u64,
+    original_name: String,
+    upload_source: &'static str,
+    title: String,
+}
+
+impl InitializeVideoUploadRequest {
+    pub(crate) fn new(
+        shortcode: &str,
+        original_size: u64,
+        original_name: String,
+        title: String,
+    ) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}/initialize"),
+            original_size,
+            original_name,
+            upload_source: "web",
+            title,
+        }
+    }
+}
+
+impl ApiRequest for InitializeVideoUploadRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::POST
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        response.into_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CancelVideoUploadRequest {
+    #[serde(skip)]
+    url: String,
+}
+
+impl CancelVideoUploadRequest {
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}/cancel"),
+        }
+    }
+}
+
+impl ApiRequest for CancelVideoUploadRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::POST
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        response.into_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct TranscodeVideoRequest {
+    #[serde(skip)]
+    url: String,
+    upload_source: &'static str,
+    key: String,
+    token: String,
+    shortcode: String,
+    size: u64,
+}
+
+impl TranscodeVideoRequest {
+    pub(crate) fn new(upload_info: &UploadInfo) -> Self {
+        let options = &upload_info.transcoder_options;
+        Self {
+            url: format!("{API_BASE_URL}/transcode/{}", upload_info.shortcode),
+            upload_source: "web",
+            key: options.key.clone(),
+            token: options.token.clone(),
+            shortcode: options.shortcode.clone(),
+            size: options.size,
+        }
+    }
+}
+
+impl ApiRequest for TranscodeVideoRequest {
+    type Response = Video;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::POST
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        response.json()
+    }
 }
