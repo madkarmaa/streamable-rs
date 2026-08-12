@@ -43,6 +43,9 @@ pub enum S3Error {
     #[error("the S3 upload URL could not be constructed")]
     InvalidUrl(#[source] url::ParseError),
 
+    #[error("the S3 upload URL does not contain a host")]
+    MissingUrlHost,
+
     #[error("invalid value for HTTP header {name}")]
     InvalidHeaderValue {
         name: String,
@@ -99,7 +102,9 @@ struct SigningInput<'a> {
 
 struct Signature {
     authorization: String,
+    #[cfg(test)]
     signed_headers: String,
+    #[cfg(test)]
     credential_scope: String,
 }
 
@@ -251,7 +256,9 @@ fn calculate_aws_s3_v4_signature(input: &SigningInput<'_>) -> Result<Signature> 
 
     Ok(Signature {
         authorization,
+        #[cfg(test)]
         signed_headers,
+        #[cfg(test)]
         credential_scope,
     })
 }
@@ -282,17 +289,47 @@ pub fn build_s3_put(upload_info: &UploadInfo, content_length: u64) -> Result<Sig
     build_s3_put_at(upload_info, content_length, &timestamp)
 }
 
+pub fn build_s3_put_for_base_url(
+    upload_info: &UploadInfo,
+    content_length: u64,
+    base_url: &Url,
+) -> Result<SignedS3Put> {
+    let timestamp = OffsetDateTime::now_utc()
+        .format(format_description!(
+            "[year][month][day]T[hour][minute][second]Z"
+        ))
+        .map_err(S3Error::TimestampFormatting)?;
+    let mut url = base_url.clone();
+    url.set_path(&upload_info.fields.key);
+
+    build_s3_put_at_url(upload_info, content_length, &timestamp, url)
+}
+
 fn build_s3_put_at(
     upload_info: &UploadInfo,
     content_length: u64,
     timestamp: &str,
 ) -> Result<SignedS3Put> {
+    let host = format!("{}.s3.amazonaws.com", upload_info.bucket);
+    let mut url = Url::parse(&format!("https://{host}")).map_err(S3Error::InvalidUrl)?;
+    url.set_path(&upload_info.fields.key);
+
+    build_s3_put_at_url(upload_info, content_length, timestamp, url)
+}
+
+fn build_s3_put_at_url(
+    upload_info: &UploadInfo,
+    content_length: u64,
+    timestamp: &str,
+    url: Url,
+) -> Result<SignedS3Put> {
     let credentials = &upload_info.credentials;
     let fields = &upload_info.fields;
     let credential_scope = CredentialScope::parse(&fields.x_amz_credential)?;
-    let host = format!("{}.s3.amazonaws.com", upload_info.bucket);
-    let mut url = Url::parse(&format!("https://{host}")).map_err(S3Error::InvalidUrl)?;
-    url.set_path(&fields.key);
+    let hostname = url.host_str().ok_or(S3Error::MissingUrlHost)?;
+    let host = url
+        .port()
+        .map_or_else(|| hostname.to_string(), |port| format!("{hostname}:{port}"));
 
     // These are the exact headers included in the signature. The same values remain in the
     // returned map, preventing signed and transmitted headers from diverging.
