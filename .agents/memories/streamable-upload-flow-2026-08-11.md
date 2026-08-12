@@ -1436,3 +1436,19 @@ Default tests remain offline.
 
 `reqwest` uses its `stream` feature and `tokio::fs::File`, so the upload body is
 streamed instead of buffering the entire video in memory.
+
+`ApiRequest::prepare_request` controls only the outgoing request body. Its
+default attaches JSON; bodyless GET, DELETE, and cancellation requests return
+the builder unchanged. Response handling remains independent in
+`decode_response`, so a bodyless shortcode GET can decode JSON while an
+initialize POST can send JSON and accept an empty response.
+
+Upload cancellation is implemented at four named boundaries:
+`generate_shortcode`, `initialize_video_upload`, `upload_video_file_to_s3`, and
+`transcode_video_after_upload`. Tests use one `EndpointRouting::Override` URL
+for auth, API, and S3 traffic; production uses each request's real absolute URL.
+
+The S3 `Signature` result exposes `signed_headers` and `credential_scope` only
+under `cfg(test)`. Production consumes both while constructing `authorization`
+and needs to retain only that final header; deterministic parity tests retain
+the intermediate strings for direct assertions.
