@@ -1434,8 +1434,13 @@ Feature-gated remote tests cover one complete upload with deletion and one
 shortcode/initialize/cancel sequence. The 2026-08-12 cancellation run passed.
 Default tests remain offline.
 
-`reqwest` uses its `stream` feature and `tokio::fs::File`, so the upload body is
-streamed instead of buffering the entire video in memory.
+The library keeps `tokio` dev-only. Upload file operations use `async-fs`, the
+body is streamed in bounded chunks with `futures-lite`, and cancellation uses
+`event-listener` plus a biased `futures-lite::future::or`. This avoids direct
+runtime primitives in library code. Native `reqwest` still depends on Tokio
+transitively and its request futures therefore still require a Tokio-compatible
+executor; removing that last runtime coupling would require replacing the HTTP
+transport.
 
 `ApiRequest::prepare_request` controls only the outgoing request body. Its
 default attaches JSON; bodyless GET, DELETE, and cancellation requests return
