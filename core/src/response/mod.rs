@@ -33,16 +33,19 @@ impl ApiResponse {
     }
 
     #[must_use]
+    /// Returns the HTTP response status.
     pub const fn status(&self) -> StatusCode {
         self.status
     }
 
     #[must_use]
+    /// Returns the effective request URL.
     pub const fn endpoint(&self) -> &Url {
         &self.endpoint
     }
 
     #[must_use]
+    /// Returns the response body as lossily decoded UTF-8.
     pub fn text(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.body)
     }

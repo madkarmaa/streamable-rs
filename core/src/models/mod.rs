@@ -13,14 +13,20 @@ use std::marker::PhantomData;
 #[cfg(test)]
 mod tests;
 
+/// Describes a typed Streamable HTTP request and its response decoder.
 pub trait ApiRequest: Serialize {
     /// The specific response model expected from this request
     type Response;
 
+    /// Returns the absolute production endpoint for this request.
     fn url(&self) -> &str;
 
+    /// Returns the HTTP method used by this request.
     fn method(&self) -> reqwest::Method;
 
+    /// Adds request-specific configuration.
+    ///
+    /// The default serializes `self` as JSON.
     fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request.json(self)
     }
@@ -64,6 +70,14 @@ fn common_api_error(response: &ApiResponse) -> Option<StreamableError> {
     None
 }
 
+/// Request for current user data, parameterized by expected user model.
+///
+/// ```
+/// use streamable::models::{ApiRequest, AuthenticatedUser, MeRequest};
+///
+/// let request = MeRequest::<AuthenticatedUser>::new();
+/// assert_eq!(request.method(), reqwest::Method::GET);
+/// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct MeRequest<Response> {
     #[serde(skip)]
@@ -72,6 +86,7 @@ pub struct MeRequest<Response> {
 
 impl<Response> MeRequest<Response> {
     #[must_use]
+    /// Creates a current-user request.
     pub const fn new() -> Self {
         Self {
             response: PhantomData,
@@ -112,10 +127,14 @@ where
     }
 }
 
+/// Registration request using email, password, and username.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserRequest {
+    /// Account email address.
     pub email: String,
+    /// Plaintext password sent to Streamable over HTTPS.
     pub password: String,
+    /// Requested username.
     pub username: String,
     #[serde(skip_deserializing, default = "verification_redirect")]
     verification_redirect: &'static str,
@@ -127,6 +146,7 @@ const fn verification_redirect() -> &'static str {
 
 impl CreateUserRequest {
     #[must_use]
+    /// Creates a registration request.
     pub const fn new(email: String, password: String, username: String) -> Self {
         Self {
             email,
@@ -173,14 +193,18 @@ impl ApiRequest for CreateUserRequest {
     }
 }
 
+/// Email-and-password login request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
+    /// Email encoded under Streamable's `username` wire field.
     pub username: String,
+    /// Plaintext password sent to Streamable over HTTPS.
     pub password: String,
 }
 
 impl LoginRequest {
     #[must_use]
+    /// Creates a login request.
     pub const fn new(email: String, password: String) -> Self {
         Self {
             username: email,
@@ -218,15 +242,20 @@ impl ApiRequest for LoginRequest {
     }
 }
 
+/// Authenticated password-change request.
 #[derive(Debug, Clone, Serialize)]
 pub struct ChangePasswordRequest {
+    /// Session cookie value expected by the endpoint body.
     pub session: String,
+    /// Current account password.
     pub current_password: String,
+    /// Requested replacement password.
     pub new_password: String,
 }
 
 impl ChangePasswordRequest {
     #[must_use]
+    /// Creates a request after trimming all three values.
     pub fn new(session: &str, current_password: &str, new_password: &str) -> Self {
         Self {
             session: session.trim().to_string(),
@@ -270,13 +299,16 @@ impl ApiRequest for ChangePasswordRequest {
     }
 }
 
+/// Request to create a label.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateLabelRequest {
+    /// Trimmed label name.
     pub name: String,
 }
 
 impl CreateLabelRequest {
     #[must_use]
+    /// Creates a request and trims surrounding whitespace from `name`.
     pub fn new(name: &str) -> Self {
         Self {
             name: name.trim().to_string(),
@@ -310,12 +342,16 @@ impl ApiRequest for CreateLabelRequest {
     }
 }
 
+/// Label owned by a Streamable account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
+    /// Label name.
     pub name: String,
+    /// Server-assigned label identifier.
     pub id: u64,
 }
 
+/// Request to delete a label by identifier.
 #[derive(Debug, Clone, Serialize)]
 pub struct DeleteLabelRequest {
     #[serde(skip)]
@@ -325,6 +361,7 @@ pub struct DeleteLabelRequest {
 
 impl DeleteLabelRequest {
     #[must_use]
+    /// Creates a DELETE request for `id`.
     pub fn new(id: u64) -> Self {
         Self {
             url: format!("{LABELS_URL}/{id}"),
@@ -361,17 +398,20 @@ impl ApiRequest for DeleteLabelRequest {
     }
 }
 
+/// Request to rename a label by identifier.
 #[derive(Debug, Clone, Serialize)]
 pub struct RenameLabelRequest {
     #[serde(skip)]
     url: String,
     #[serde(skip)]
     id: u64,
+    /// Trimmed replacement label name.
     pub name: String,
 }
 
 impl RenameLabelRequest {
     #[must_use]
+    /// Creates a PATCH request for `id` and trims `name`.
     pub fn new(id: u64, name: &str) -> Self {
         Self {
             url: format!("{LABELS_URL}/{id}"),
@@ -405,59 +445,96 @@ impl ApiRequest for RenameLabelRequest {
     }
 }
 
+/// Basic current-user data available without authentication.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnauthenticatedUser {
+    /// Socket identifier returned by Streamable.
     pub socket: String,
+    /// Total play count visible to this session.
     pub total_plays: u32,
+    /// Total upload count visible to this session.
     pub total_uploads: u32,
 }
 
+/// Full current-user data returned for an authenticated session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthenticatedUser {
     #[serde(flatten)]
+    /// Basic fields flattened into the API response.
     pub unauthenticated: UnauthenticatedUser,
 
+    /// Server-assigned account identifier.
     pub id: u64,
+    /// Account username.
     pub user_name: String,
+    /// Account email address.
     pub email: String,
+    /// Account creation timestamp returned by Streamable.
     pub date_added: f64,
+    /// Profile color value.
     pub color: String,
+    /// Profile biography.
     pub bio: String,
+    /// Whether Streamable marks the account as restricted.
     pub restricted: bool,
 
+    /// Current plan name.
     pub plan_name: String,
+    /// Maximum video length allowed by the plan.
     pub plan_max_length: u32,
+    /// Maximum upload size allowed by the plan, as returned by Streamable.
     pub plan_max_size: f64,
 
+    /// Current account privacy settings.
     pub privacy_settings: PrivacySettings,
 }
 
+/// Default visibility assigned to account videos.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Visibility {
+    /// Videos are publicly visible.
     Public,
+    /// Videos are private.
     Private,
 }
 
+/// Account-level privacy settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivacySettings {
+    /// Whether viewers may download videos.
     pub allow_download: bool,
+    /// Whether viewers may share videos.
     pub allow_sharing: bool,
+    /// Default video visibility.
     pub visibility: Visibility,
 }
 
+/// Partial privacy-settings update; `None` fields are omitted from JSON.
+///
+/// ```
+/// use streamable::models::{PrivacySettingsRequest, Visibility};
+///
+/// let request = PrivacySettingsRequest::new(Some(true), None, Some(Visibility::Private));
+/// assert_eq!(request.allow_download, Some(true));
+/// assert!(request.allow_sharing.is_none());
+/// ```
 #[derive(Debug, Clone, Serialize)]
 pub struct PrivacySettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// New download permission, or `None` to preserve it.
     pub allow_download: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// New sharing permission, or `None` to preserve it.
     pub allow_sharing: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// New default visibility, or `None` to preserve it.
     pub visibility: Option<Visibility>,
 }
 
 impl PrivacySettingsRequest {
     #[must_use]
+    /// Creates a partial privacy-settings request.
     pub const fn new(
         allow_download: Option<bool>,
         allow_sharing: Option<bool>,
@@ -522,16 +599,25 @@ pub(crate) struct Fields {
 /// Video metadata returned after Streamable accepts or processes an upload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Video {
+    /// Short identifier used in Streamable URLs.
     pub shortcode: String,
     #[serde(default)]
+    /// Processing status code returned by Streamable.
     pub status: u8,
     #[serde(default)]
+    /// Processing completion percentage.
     pub percent: u8,
+    /// Video creation timestamp returned by Streamable.
     pub date_added: i64,
+    /// Video URL returned by Streamable.
     pub url: String,
+    /// Original filename when included in the response.
     pub original_name: Option<String>,
+    /// Duration in seconds when known.
     pub duration: Option<f64>,
+    /// Pixel width when known.
     pub width: Option<u32>,
+    /// Pixel height when known.
     pub height: Option<u32>,
 }
 

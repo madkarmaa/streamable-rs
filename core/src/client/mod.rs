@@ -73,6 +73,14 @@ struct UploadCancellationState {
 }
 
 impl UploadCancellationToken {
+    /// Creates a token in the active (not cancelled) state.
+    ///
+    /// ```
+    /// use streamable::UploadCancellationToken;
+    ///
+    /// let token = UploadCancellationToken::new();
+    /// assert!(!token.is_cancelled());
+    /// ```
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -83,6 +91,7 @@ impl UploadCancellationToken {
         }
     }
 
+    /// Marks this token and all its clones as cancelled and wakes upload tasks.
     pub fn cancel(&self) {
         if !self.inner.cancelled.swap(true, Ordering::AcqRel) {
             self.inner.notify.notify_waiters();
@@ -90,6 +99,7 @@ impl UploadCancellationToken {
     }
 
     #[must_use]
+    /// Returns whether cancellation has been requested.
     pub fn is_cancelled(&self) -> bool {
         self.inner.cancelled.load(Ordering::Acquire)
     }

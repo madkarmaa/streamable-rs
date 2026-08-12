@@ -61,6 +61,15 @@ pub fn generate_random_password() -> String {
     password.into_iter().map(char::from).collect()
 }
 
+/// Returns whether `path` identifies a supported video by inspecting file contents.
+///
+/// Missing files and unrecognized formats return `false`.
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert!(!streamable::utils::is_video_file(Path::new("missing-video.mp4")));
+/// ```
 #[must_use]
 pub fn is_video_file(path: &Path) -> bool {
     path.is_file()
