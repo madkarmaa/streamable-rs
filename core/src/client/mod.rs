@@ -415,18 +415,26 @@ impl StreamableClient<Authenticated> {
 impl<State: Sync> StreamableClient<State> {
     /// Uploads a local video and starts Streamable transcoding.
     ///
-    /// **Note**: The title defaults to the file stem.
+    /// `title` is sent as the video's title when provided. Otherwise, the title defaults to the
+    /// file stem.
     ///
     /// # Errors
     ///
     /// Returns an error when the path cannot be read, is not a recognized video, any API or S3
     /// request fails, the upload configuration cannot be signed, or a response cannot be decoded.
-    pub async fn upload_video(&self, video_file: impl AsRef<Path>) -> Result<models::Video> {
-        self.upload_video_with_cancellation(video_file, UploadCancellationToken::new())
+    pub async fn upload_video(
+        &self,
+        video_file: impl AsRef<Path>,
+        title: Option<String>,
+    ) -> Result<models::Video> {
+        self.upload_video_with_cancellation(video_file, title, UploadCancellationToken::new())
             .await
     }
 
     /// Uploads a local video with cooperative cancellation.
+    ///
+    /// `title` is sent as the video's title when provided. Otherwise, the title defaults to the
+    /// file stem.
     ///
     /// Calling [`UploadCancellationToken::cancel`] aborts the active upload request.
     ///
@@ -437,6 +445,7 @@ impl<State: Sync> StreamableClient<State> {
     pub async fn upload_video_with_cancellation(
         &self,
         video_file: impl AsRef<Path>,
+        title: Option<String>,
         cancellation: UploadCancellationToken,
     ) -> Result<models::Video> {
         let video_file = tokio::fs::canonicalize(video_file.as_ref()).await?;
@@ -453,12 +462,17 @@ impl<State: Sync> StreamableClient<State> {
                 path: video_file.clone(),
             })?;
 
-        let title = video_file
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .ok_or_else(|| StreamableError::InvalidVideoFile {
-                path: video_file.clone(),
-            })?;
+        let title = title.map_or_else(
+            || {
+                video_file
+                    .file_stem()
+                    .map(|stem| stem.to_string_lossy().into_owned())
+                    .ok_or_else(|| StreamableError::InvalidVideoFile {
+                        path: video_file.clone(),
+                    })
+            },
+            Ok,
+        )?;
 
         let size = metadata.len();
 

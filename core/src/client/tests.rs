@@ -240,7 +240,7 @@ async fn video_upload_follows_live_web_request_order_and_wire_shapes() {
             "original_size": video_size,
             "original_name": "webm.webm",
             "upload_source": "web",
-            "title": "webm"
+            "title": "A custom title"
         })))
         .respond_with(ResponseTemplate::new(200))
         .expect(1)
@@ -284,7 +284,7 @@ async fn video_upload_follows_live_web_request_order_and_wire_shapes() {
 
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
     let video = client
-        .upload_video(&video_path)
+        .upload_video(&video_path, Some("A custom title".to_string()))
         .await
         .expect("video upload should complete through transcoding");
 
@@ -325,6 +325,41 @@ async fn video_upload_follows_live_web_request_order_and_wire_shapes() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn video_upload_defaults_title_to_file_stem() {
+    let mock_server = MockServer::start().await;
+    let video_path = media_path("webm.webm");
+    let video_size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/initialize"))
+        .and(body_json(json!({
+            "original_size": video_size,
+            "original_name": "webm.webm",
+            "upload_source": "web",
+            "title": "webm"
+        })))
+        .respond_with(ResponseTemplate::new(400))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    client
+        .upload_video(video_path, None)
+        .await
+        .expect_err("mock initialization failure should stop the upload");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
     let mock_server = MockServer::start().await;
     let video_path = media_path("webm.webm");
@@ -361,7 +396,7 @@ async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
 
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
     let error = client
-        .upload_video_with_cancellation(video_path, cancellation.clone())
+        .upload_video_with_cancellation(video_path, None, cancellation.clone())
         .await
         .expect_err("cancelled upload should stop before transcoding");
 
@@ -402,7 +437,7 @@ async fn pre_cancelled_video_upload_makes_no_request() {
     let cancellation = UploadCancellationToken::new();
     cancellation.cancel();
     let error = client
-        .upload_video_with_cancellation(media_path("webm.webm"), cancellation)
+        .upload_video_with_cancellation(media_path("webm.webm"), None, cancellation)
         .await
         .expect_err("pre-cancelled upload should not start");
 
@@ -425,7 +460,10 @@ async fn video_upload_rejects_non_video_before_network_access() {
     let mock_server = MockServer::start().await;
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
     let error = client
-        .upload_video(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .upload_video(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+            None,
+        )
         .await
         .expect_err("non-video file should be rejected");
 
@@ -458,7 +496,7 @@ async fn video_upload_maps_shortcode_rate_limit_before_mutation() {
 
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
     let error = client
-        .upload_video(video_path)
+        .upload_video(video_path, None)
         .await
         .expect_err("rate-limited upload should fail");
 
@@ -479,7 +517,7 @@ async fn remote_video_upload_reaches_transcoding_and_is_deleted() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
     let client = StreamableClient::new().expect("client should initialize");
     let video = client
-        .upload_video(media_path("webm.webm"))
+        .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
     let mut delete_url = Url::parse(crate::constants::API_BASE_URL)
