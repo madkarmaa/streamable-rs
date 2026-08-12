@@ -3,9 +3,9 @@ use crate::{StreamableError, utils::*};
 
 use serde_json::json;
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-use wiremock::matchers::{body_json, header};
+use wiremock::matchers::{body_bytes, body_json, header, query_param};
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-use wiremock::{Match, Request};
+use wiremock::{Match, Request, Respond};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
@@ -16,6 +16,19 @@ static REMOTE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 struct NoCookieHeader;
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+struct CancelUploadOnRequest {
+    cancellation: UploadCancellationToken,
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+impl Respond for CancelUploadOnRequest {
+    fn respond(&self, _request: &Request) -> ResponseTemplate {
+        self.cancellation.cancel();
+        ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5))
+    }
+}
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 impl Match for NoCookieHeader {
@@ -132,7 +145,62 @@ async fn mock_json_error(
 fn mock_client(server: &MockServer) -> Result<UnauthenticatedStreamableClient> {
     let base_url = Url::parse(&server.uri()).expect("mock server URI must be valid");
 
-    StreamableClient::with_base_urls(base_url.clone(), base_url)
+    StreamableClient::with_base_url(base_url)
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn mock_upload_client(server: &MockServer) -> Result<UnauthenticatedStreamableClient> {
+    let base_url = Url::parse(&server.uri()).expect("mock server URI must be valid");
+
+    StreamableClient::with_base_url(base_url)
+}
+
+fn media_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../media")
+        .join(name)
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn mock_upload_info(video_size: u64) -> serde_json::Value {
+    json!({
+        "accelerated": false,
+        "bucket": "streamables-upload",
+        "credentials": {
+            "accessKeyId": "AKIDEXAMPLE",
+            "secretAccessKey": "secret",
+            "sessionToken": "session-token"
+        },
+        "fields": {
+            "key": "upload/mock",
+            "bucket": "streamables-upload",
+            "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+            "X-Amz-Credential": "AKIDEXAMPLE/20260812/us-east-1/s3/aws4_request",
+            "X-Amz-Date": "20260812T100000Z",
+            "X-Amz-Security-Token": "session-token",
+            "Policy": "policy",
+            "X-Amz-Signature": "server-signature"
+        },
+        "url": "https://s3.amazonaws.com/streamables-upload",
+        "video": {
+            "shortcode": "mock",
+            "status": 0,
+            "percent": 0,
+            "date_added": 1,
+            "url": "https://streamable.com/mock"
+        },
+        "options": { "preset": "mp4", "shortcode": "mock", "screenshot": true },
+        "shortcode": "mock",
+        "key": "upload/mock",
+        "time": 1,
+        "transcoder": null,
+        "transcoder_options": {
+            "key": "upload/mock",
+            "token": "transcoder-token",
+            "shortcode": "mock",
+            "size": video_size
+        }
+    })
 }
 
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
@@ -150,16 +218,331 @@ async fn test_api_client_initialization() {
     assert_eq!(client.user(), None);
 }
 
-#[test]
-fn configured_base_urls_are_stored() {
-    let auth_base_url =
-        Url::parse("http://auth.example.test").expect("mock auth URL should be valid");
-    let api_base_url = Url::parse("http://api.example.test").expect("mock API URL should be valid");
-    let client = StreamableClient::with_base_urls(auth_base_url.clone(), api_base_url.clone())
-        .expect("client should initialize");
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_upload_follows_live_web_request_order_and_wire_shapes() {
+    let mock_server = MockServer::start().await;
+    let video_path = media_path("webm.webm");
+    let video_bytes = std::fs::read(&video_path).expect("video fixture should be readable");
+    let video_size = u64::try_from(video_bytes.len()).expect("fixture length should fit u64");
 
-    assert_eq!(client.auth_base_url, auth_base_url);
-    assert_eq!(client.api_base_url, api_base_url);
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .and(query_param("size", video_size.to_string()))
+        .and(query_param("version", "unknown"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/initialize"))
+        .and(body_json(json!({
+            "original_size": video_size,
+            "original_name": "webm.webm",
+            "upload_source": "web",
+            "title": "webm"
+        })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/upload/mock"))
+        .and(header("content-type", "application/octet-stream"))
+        .and(header("content-length", video_size.to_string()))
+        .and(header("x-amz-content-sha256", "UNSIGNED-PAYLOAD"))
+        .and(header("x-amz-security-token", "session-token"))
+        .and(header("x-amz-user-agent", "aws-sdk-js/2.1530.0 callback"))
+        .and(body_bytes(video_bytes))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/transcode/mock"))
+        .and(body_json(json!({
+            "upload_source": "web",
+            "key": "upload/mock",
+            "token": "transcoder-token",
+            "shortcode": "mock",
+            "size": video_size
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "shortcode": "mock",
+            "status": 1,
+            "percent": 0,
+            "date_added": 1,
+            "url": "https://streamable.com/mock",
+            "original_name": "webm.webm",
+            "duration": null,
+            "width": null,
+            "height": null
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    let video = client
+        .upload_video(&video_path)
+        .await
+        .expect("video upload should complete through transcoding");
+
+    assert_eq!(video.shortcode, "mock");
+    assert_eq!(video.status, 1);
+    assert_eq!(video.percent, 0);
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    let request_order = requests
+        .iter()
+        .map(|request| (request.method.as_str(), request.url.path()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        request_order,
+        [
+            ("GET", "/api/v1/uploads/shortcode"),
+            ("POST", "/api/v1/videos/mock/initialize"),
+            ("PUT", "/upload/mock"),
+            ("POST", "/api/v1/transcode/mock"),
+        ]
+    );
+    assert!(requests[0].body.is_empty());
+    let s3_request = requests.get(2).expect("S3 PUT should be third request");
+    let authorization = s3_request
+        .headers
+        .get("authorization")
+        .expect("S3 authorization header should be present")
+        .to_str()
+        .expect("S3 authorization header should be ASCII");
+    assert!(authorization.contains(
+        "SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token;x-amz-user-agent"
+    ));
+    assert!(!s3_request.headers.contains_key("x-amz-acl"));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
+    let mock_server = MockServer::start().await;
+    let video_path = media_path("webm.webm");
+    let cancellation = UploadCancellationToken::new();
+    let video_size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/initialize"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PUT"))
+        .and(path("/upload/mock"))
+        .respond_with(CancelUploadOnRequest {
+            cancellation: cancellation.clone(),
+        })
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/cancel"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    let error = client
+        .upload_video_with_cancellation(video_path, cancellation.clone())
+        .await
+        .expect_err("cancelled upload should stop before transcoding");
+
+    assert!(cancellation.is_cancelled());
+    assert!(matches!(
+        error,
+        StreamableError::UploadCancelled {
+            shortcode: Some(ref shortcode)
+        } if shortcode == "mock"
+    ));
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.url.path()))
+            .collect::<Vec<_>>(),
+        [
+            ("GET", "/api/v1/uploads/shortcode"),
+            ("POST", "/api/v1/videos/mock/initialize"),
+            ("PUT", "/upload/mock"),
+            ("POST", "/api/v1/videos/mock/cancel"),
+        ]
+    );
+    let cancel_request = requests
+        .last()
+        .expect("cancellation request should be recorded");
+    assert!(cancel_request.body.is_empty());
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn pre_cancelled_video_upload_makes_no_request() {
+    let mock_server = MockServer::start().await;
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    let cancellation = UploadCancellationToken::new();
+    cancellation.cancel();
+    let error = client
+        .upload_video_with_cancellation(media_path("webm.webm"), cancellation)
+        .await
+        .expect_err("pre-cancelled upload should not start");
+
+    assert!(matches!(
+        error,
+        StreamableError::UploadCancelled { shortcode: None }
+    ));
+    assert!(
+        mock_server
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .is_empty()
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_upload_rejects_non_video_before_network_access() {
+    let mock_server = MockServer::start().await;
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    let error = client
+        .upload_video(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .await
+        .expect_err("non-video file should be rejected");
+
+    assert!(matches!(error, StreamableError::InvalidVideoFile { .. }));
+    assert!(
+        mock_server
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .is_empty()
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_upload_maps_shortcode_rate_limit_before_mutation() {
+    let mock_server = MockServer::start().await;
+    let video_path = media_path("webm.webm");
+    let video_size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .and(query_param("size", video_size.to_string()))
+        .and(query_param("version", "unknown"))
+        .respond_with(ResponseTemplate::new(429))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    let error = client
+        .upload_video(video_path)
+        .await
+        .expect_err("rate-limited upload should fail");
+
+    assert!(matches!(error, StreamableError::RateLimitExceeded { .. }));
+    assert_eq!(
+        mock_server
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .len(),
+        1
+    );
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_video_upload_reaches_transcoding_and_is_deleted() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = StreamableClient::new().expect("client should initialize");
+    let video = client
+        .upload_video(media_path("webm.webm"))
+        .await
+        .expect("remote video upload should reach transcoding");
+    let mut delete_url = Url::parse(crate::constants::API_BASE_URL)
+        .expect("production API base URL should be valid");
+    delete_url.set_path(&format!("/api/v1/videos/{}", video.shortcode));
+    let deleted = client
+        .client
+        .delete(delete_url)
+        .send()
+        .await
+        .expect("remote cleanup request should succeed")
+        .error_for_status()
+        .expect("remote cleanup should return success")
+        .text()
+        .await
+        .expect("remote cleanup response should be text");
+
+    assert_eq!(
+        video.url,
+        format!("https://streamable.com/{}", video.shortcode)
+    );
+    assert_eq!(deleted, "true");
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_video_upload_cancellation_is_accepted() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = StreamableClient::new().expect("client should initialize");
+    let video_path = media_path("webm.webm");
+    let size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+    let upload_info = client
+        .execute(&models::ShortcodeRequest::new(size))
+        .await
+        .expect("remote shortcode request should succeed");
+    client
+        .execute(&models::InitializeVideoUploadRequest::new(
+            &upload_info.shortcode,
+            size,
+            "webm.webm".to_string(),
+            "webm".to_string(),
+        ))
+        .await
+        .expect("remote initialization should succeed");
+
+    client
+        .cancel_video_upload(&upload_info.shortcode)
+        .await
+        .expect("remote cancellation should succeed");
+}
+
+#[test]
+fn configured_base_url_is_stored() {
+    let base_url = Url::parse("http://api.example.test").expect("mock URL should be valid");
+    let client =
+        StreamableClient::with_base_url(base_url.clone()).expect("client should initialize");
+
+    assert!(matches!(
+        client.endpoint_routing,
+        EndpointRouting::Override(url) if url == base_url
+    ));
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
