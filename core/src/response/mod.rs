@@ -9,7 +9,7 @@ use crate::errors::{Result, StreamableError};
 #[cfg(test)]
 mod tests;
 
-/// HTTP response data passed to an [`ApiRequest`](crate::models::ApiRequest) decoder.
+/// HTTP response data exposing status, endpoint, text, and JSON decoding.
 pub struct ApiResponse {
     status: StatusCode,
     endpoint: Url,

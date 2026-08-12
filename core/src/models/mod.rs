@@ -13,29 +13,17 @@ use std::marker::PhantomData;
 #[cfg(test)]
 mod tests;
 
-/// Describes a typed Streamable HTTP request and its response decoder.
-pub trait ApiRequest: Serialize {
-    /// The specific response model expected from this request
+pub(crate) trait ApiRequest: Serialize {
     type Response;
 
-    /// Returns the absolute production endpoint for this request.
     fn url(&self) -> &str;
 
-    /// Returns the HTTP method used by this request.
     fn method(&self) -> reqwest::Method;
 
-    /// Adds request-specific configuration.
-    ///
-    /// The default serializes `self` as JSON.
     fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         request.json(self)
     }
 
-    /// Decodes the HTTP response expected by this request.
-    ///
-    /// # Errors
-    ///
-    /// Returns a request-specific API, transport, or response decoding error.
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response>;
 }
 
@@ -70,24 +58,15 @@ fn common_api_error(response: &ApiResponse) -> Option<StreamableError> {
     None
 }
 
-/// Request for current user data, parameterized by expected user model.
-///
-/// ```
-/// use streamable::models::{ApiRequest, AuthenticatedUser, MeRequest};
-///
-/// let request = MeRequest::<AuthenticatedUser>::new();
-/// assert_eq!(request.method(), reqwest::Method::GET);
-/// ```
 #[derive(Debug, Clone, Serialize)]
-pub struct MeRequest<Response> {
+pub(crate) struct MeRequest<Response> {
     #[serde(skip)]
     response: PhantomData<Response>,
 }
 
 impl<Response> MeRequest<Response> {
     #[must_use]
-    /// Creates a current-user request.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             response: PhantomData,
         }
@@ -127,15 +106,11 @@ where
     }
 }
 
-/// Registration request using email, password, and username.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateUserRequest {
-    /// Account email address.
-    pub email: String,
-    /// Plaintext password sent to Streamable over HTTPS.
-    pub password: String,
-    /// Requested username.
-    pub username: String,
+pub(crate) struct CreateUserRequest {
+    pub(crate) email: String,
+    pub(crate) password: String,
+    pub(crate) username: String,
     #[serde(skip_deserializing, default = "verification_redirect")]
     verification_redirect: &'static str,
 }
@@ -146,8 +121,7 @@ const fn verification_redirect() -> &'static str {
 
 impl CreateUserRequest {
     #[must_use]
-    /// Creates a registration request.
-    pub const fn new(email: String, password: String, username: String) -> Self {
+    pub(crate) const fn new(email: String, password: String, username: String) -> Self {
         Self {
             email,
             password,
@@ -193,19 +167,15 @@ impl ApiRequest for CreateUserRequest {
     }
 }
 
-/// Email-and-password login request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LoginRequest {
-    /// Email encoded under Streamable's `username` wire field.
-    pub username: String,
-    /// Plaintext password sent to Streamable over HTTPS.
-    pub password: String,
+pub(crate) struct LoginRequest {
+    pub(crate) username: String,
+    pub(crate) password: String,
 }
 
 impl LoginRequest {
     #[must_use]
-    /// Creates a login request.
-    pub const fn new(email: String, password: String) -> Self {
+    pub(crate) const fn new(email: String, password: String) -> Self {
         Self {
             username: email,
             password,
@@ -242,21 +212,16 @@ impl ApiRequest for LoginRequest {
     }
 }
 
-/// Authenticated password-change request.
 #[derive(Debug, Clone, Serialize)]
-pub struct ChangePasswordRequest {
-    /// Session cookie value expected by the endpoint body.
-    pub session: String,
-    /// Current account password.
-    pub current_password: String,
-    /// Requested replacement password.
-    pub new_password: String,
+pub(crate) struct ChangePasswordRequest {
+    pub(crate) session: String,
+    pub(crate) current_password: String,
+    pub(crate) new_password: String,
 }
 
 impl ChangePasswordRequest {
     #[must_use]
-    /// Creates a request after trimming all three values.
-    pub fn new(session: &str, current_password: &str, new_password: &str) -> Self {
+    pub(crate) fn new(session: &str, current_password: &str, new_password: &str) -> Self {
         Self {
             session: session.trim().to_string(),
             current_password: current_password.trim().to_string(),
@@ -299,17 +264,14 @@ impl ApiRequest for ChangePasswordRequest {
     }
 }
 
-/// Request to create a label.
 #[derive(Debug, Clone, Serialize)]
-pub struct CreateLabelRequest {
-    /// Trimmed label name.
-    pub name: String,
+pub(crate) struct CreateLabelRequest {
+    pub(crate) name: String,
 }
 
 impl CreateLabelRequest {
     #[must_use]
-    /// Creates a request and trims surrounding whitespace from `name`.
-    pub fn new(name: &str) -> Self {
+    pub(crate) fn new(name: &str) -> Self {
         Self {
             name: name.trim().to_string(),
         }
@@ -351,9 +313,8 @@ pub struct Label {
     pub id: u64,
 }
 
-/// Request to delete a label by identifier.
 #[derive(Debug, Clone, Serialize)]
-pub struct DeleteLabelRequest {
+pub(crate) struct DeleteLabelRequest {
     #[serde(skip)]
     url: String,
     id: u64,
@@ -361,8 +322,7 @@ pub struct DeleteLabelRequest {
 
 impl DeleteLabelRequest {
     #[must_use]
-    /// Creates a DELETE request for `id`.
-    pub fn new(id: u64) -> Self {
+    pub(crate) fn new(id: u64) -> Self {
         Self {
             url: format!("{LABELS_URL}/{id}"),
             id,
@@ -398,21 +358,18 @@ impl ApiRequest for DeleteLabelRequest {
     }
 }
 
-/// Request to rename a label by identifier.
 #[derive(Debug, Clone, Serialize)]
-pub struct RenameLabelRequest {
+pub(crate) struct RenameLabelRequest {
     #[serde(skip)]
     url: String,
     #[serde(skip)]
     id: u64,
-    /// Trimmed replacement label name.
-    pub name: String,
+    pub(crate) name: String,
 }
 
 impl RenameLabelRequest {
     #[must_use]
-    /// Creates a PATCH request for `id` and trims `name`.
-    pub fn new(id: u64, name: &str) -> Self {
+    pub(crate) fn new(id: u64, name: &str) -> Self {
         Self {
             url: format!("{LABELS_URL}/{id}"),
             id,
@@ -510,32 +467,19 @@ pub struct PrivacySettings {
     pub visibility: Visibility,
 }
 
-/// Partial privacy-settings update; `None` fields are omitted from JSON.
-///
-/// ```
-/// use streamable::models::{PrivacySettingsRequest, Visibility};
-///
-/// let request = PrivacySettingsRequest::new(Some(true), None, Some(Visibility::Private));
-/// assert_eq!(request.allow_download, Some(true));
-/// assert!(request.allow_sharing.is_none());
-/// ```
 #[derive(Debug, Clone, Serialize)]
-pub struct PrivacySettingsRequest {
+pub(crate) struct PrivacySettingsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// New download permission, or `None` to preserve it.
-    pub allow_download: Option<bool>,
+    pub(crate) allow_download: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// New sharing permission, or `None` to preserve it.
-    pub allow_sharing: Option<bool>,
+    pub(crate) allow_sharing: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    /// New default visibility, or `None` to preserve it.
-    pub visibility: Option<Visibility>,
+    pub(crate) visibility: Option<Visibility>,
 }
 
 impl PrivacySettingsRequest {
     #[must_use]
-    /// Creates a partial privacy-settings request.
-    pub const fn new(
+    pub(crate) const fn new(
         allow_download: Option<bool>,
         allow_sharing: Option<bool>,
         visibility: Option<Visibility>,

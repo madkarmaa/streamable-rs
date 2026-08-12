@@ -5,7 +5,7 @@ mod client;
 mod constants;
 /// Error and result types returned by this crate.
 pub mod errors;
-/// Public request and response data models.
+/// Public response data models.
 pub mod models;
 /// HTTP response wrapper used by custom request decoders.
 pub mod response;
