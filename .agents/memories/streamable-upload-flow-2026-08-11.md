@@ -1434,13 +1434,11 @@ Feature-gated remote tests cover one complete upload with deletion and one
 shortcode/initialize/cancel sequence. The 2026-08-12 cancellation run passed.
 Default tests remain offline.
 
-The library keeps `tokio` dev-only. Upload file operations use `async-fs`, the
-body is streamed in bounded chunks with `futures-lite`, and cancellation uses
-`event-listener` plus a biased `futures-lite::future::or`. This avoids direct
-runtime primitives in library code. Native `reqwest` still depends on Tokio
-transitively and its request futures therefore still require a Tokio-compatible
-executor; removing that last runtime coupling would require replacing the HTTP
-transport.
+Native `reqwest` already requires a Tokio-compatible runtime. The upload flow
+therefore uses Tokio directly for asynchronous file streaming, cancellation
+notification, and biased request cancellation. Tokio's `full` feature set is a
+normal dependency so downstream builds and the crate's own tests use the same
+runtime feature contract; it is not duplicated under dev-dependencies.
 
 `ApiRequest::prepare_request` controls only the outgoing request body. Its
 default attaches JSON; bodyless GET, DELETE, and cancellation requests return
