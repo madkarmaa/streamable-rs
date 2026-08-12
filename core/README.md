@@ -16,11 +16,13 @@ use streamable::{Result, StreamableClient};
 async fn main() -> Result<()> {
     let client = StreamableClient::new()?;
     let client = client
-        .login("user@example.com".to_owned(), "password".to_owned())
+        .login("user@example.com".into(), "password".into())
         .await?;
 
     println!("signed in as {}", client.user().user_name);
-    let video = client.upload_video("example.mp4").await?;
+    let video = client
+        .upload_video("example.mp4", Some("My video".into()))
+        .await?;
     println!("https://streamable.com/{}", video.shortcode);
     Ok(())
 }
