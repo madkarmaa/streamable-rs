@@ -1,5 +1,7 @@
 # Streamable dashboard More menu: Edit labels
 
+Implementation status: **Not implemented in `streamable-rs`; label lifecycle APIs alone are implemented.**
+
 Captured 2026-08-13 from the authenticated Streamable dashboard, production
 source maps, and Chrome DevTools network inspection. This file records only the
 **Edit labels** feature and its label-creation, assignment, removal, bulk-state,

@@ -1,5 +1,7 @@
 # Streamable dashboard More menu: Privacy
 
+Implementation status: **Not implemented in `streamable-rs`; account-level privacy settings alone are implemented.**
+
 Captured 2026-08-13 from the authenticated Streamable dashboard, production
 source maps, Chrome DevTools network inspection, and comparison with the
 sibling Python client. This file records only the **Privacy** feature and its

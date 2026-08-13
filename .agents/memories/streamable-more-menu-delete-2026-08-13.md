@@ -1,5 +1,7 @@
 # Streamable dashboard More menu: Delete
 
+Implementation status: **Not implemented in `streamable-rs`.**
+
 Verified against the authenticated web dashboard on 2026-08-13. This records the
 wire contract and UI behavior for one feature only: deleting a video.
 

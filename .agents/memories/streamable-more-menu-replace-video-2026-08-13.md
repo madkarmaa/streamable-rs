@@ -1,5 +1,7 @@
 # Streamable dashboard More menu: Replace video
 
+Implementation status: **Not implemented in `streamable-rs`.**
+
 Captured 2026-08-13 from the authenticated Streamable dashboard, production
 source maps, Chrome DevTools network inspection, and comparison with the
 sibling Python client. This file records only the **Replace video** feature and

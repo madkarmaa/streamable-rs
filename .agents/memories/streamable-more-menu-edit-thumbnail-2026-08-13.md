@@ -1,5 +1,7 @@
 # Streamable dashboard More menu: Edit thumbnail
 
+Implementation status: **Not implemented in `streamable-rs`.**
+
 Captured 2026-08-13 from current Streamable web UI, production source maps,
 and Chrome DevTools network inspection. This file records only the **Edit
 thumbnail** feature and its two save branches. Temporary video IDs, session

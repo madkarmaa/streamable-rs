@@ -1,5 +1,7 @@
 # Streamable authenticated feature flags
 
+Implementation status: **Implemented as `scripts/streamable-feature-flags.user.js`; not implemented in the Rust client.**
+
 Verified against the authenticated web dashboard on 2026-08-13. This memory is
 limited to the feature-flag fetch, consumption, and local override workflow.
 

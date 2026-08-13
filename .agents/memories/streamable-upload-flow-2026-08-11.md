@@ -1,4 +1,5 @@
 STREAMABLE WEB UPLOAD FLOW
+Implementation status: **Implemented in `streamable-rs`.**
 Captured: 2026-08-11
 Source: Chrome DevTools Protocol network capture on https://streamable.com/
 Fixture: media/mp4.mp4

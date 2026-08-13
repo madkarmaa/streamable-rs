@@ -1,5 +1,7 @@
 # Streamable dashboard More menu: Analytics
 
+Implementation status: **Not implemented in `streamable-rs`.**
+
 Captured 2026-08-13 from current Streamable web UI, current production JavaScript,
 and Chrome DevTools network inspection. This file records only the **Analytics**
 feature and its subfeatures. Temporary video IDs, session cookies, signed CDN
