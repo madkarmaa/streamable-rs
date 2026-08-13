@@ -1,6 +1,19 @@
 # Streamable dashboard More menu: Delete
 
-Implementation status: **Not implemented in `streamable-rs`.**
+Implementation status: **Implemented in `streamable-rs`.**
+
+The authenticated client exposes `delete_video(&str) -> Result<()>`. Its internal
+request model sends a bodyless `DELETE` to `/api/v1/videos/<shortcode>`, relies on
+the client's session cookie, and accepts only the exact response text `true`.
+Other successful response bodies produce
+`StreamableError::UnexpectedVideoDeletionResponse`; common session/rate-limit
+errors and ordinary HTTP/transport errors retain the existing mappings.
+
+Offline client tests cover the full path, method, cookie, missing body and
+`Content-Type`, literal success contract, non-literal success bodies, common
+errors, ordinary HTTP errors, and transport failure. The existing gated remote
+upload test now authenticates, deletes through the public method, and verifies
+that `GET /api/v1/videos/<shortcode>` returns Not Found.
 
 Verified against the authenticated web dashboard on 2026-08-13. This records the
 wire contract and UI behavior for one feature only: deleting a video.
