@@ -12,7 +12,7 @@
         "typescript": "^5"
     },
     "scripts": {
-        "prepare": "husky",
+        "prepare": "husky && git config --local core.symlinks true",
         "format": "prettier --write ."
     }
 }
