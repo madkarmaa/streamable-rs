@@ -1,6 +1,49 @@
 #!/bin/sh
 set -eu
 
-cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets --all-features -- -D warnings
+root=$(git rev-parse --show-toplevel)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/streamable-pre-commit.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+
+git diff --cached --name-only --diff-filter=ACMR >"$tmp/files"
+
+while IFS= read -r path; do
+    [ -n "$path" ] || continue
+
+    file_info=$(bunx prettier --file-info "$path" --ignore-path "$root/.prettierignore")
+    if printf '%s\n' "$file_info" | grep -Eq '"ignored": true|"inferredParser": null'; then
+        continue
+    fi
+
+    index_entry=$(git ls-files --stage -- "$path")
+    mode=${index_entry%% *}
+    case "$mode" in
+        100644 | 100755) ;;
+        *) continue ;;
+    esac
+
+    if git diff --quiet -- "$path"; then
+        partially_staged=false
+    else
+        partially_staged=true
+    fi
+
+    staged_path="$tmp/staged/$path"
+    mkdir -p "$(dirname "$staged_path")"
+    git show ":$path" >"$staged_path"
+
+    bunx prettier --write --ignore-unknown --config "$root/.prettierrc" -- "$path" "$staged_path"
+
+    if [ "$partially_staged" = true ]; then
+        blob=$(git hash-object -w -- "$staged_path")
+        git update-index --cacheinfo "$mode" "$blob" "$path"
+    else
+        git add -- "$path"
+    fi
+done <"$tmp/files"
+
+if git diff --cached --name-only --diff-filter=ACMR -- '*.rs' | grep -q .; then
+    cargo fmt --all -- --check
+    cargo test --workspace
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
+fi
