@@ -92,8 +92,8 @@ The live response changed these meaningful fields:
 
 ```json
 {
-  "thumbnail_offset": "26",
-  "dynamic_thumbnail_url": "//cdn-cf-east.streamable.com/image/<shortcode>-screenshot<generated>.jpg"
+    "thumbnail_offset": "26",
+    "dynamic_thumbnail_url": "//cdn-cf-east.streamable.com/image/<shortcode>-screenshot<generated>.jpg"
 }
 ```
 
@@ -105,7 +105,7 @@ number.
 Desktop UI exposes `Upload Image` through a hidden file input:
 
 ```html
-<input id="upload-input" type="file" accept="image/*">
+<input id="upload-input" type="file" accept="image/*" />
 ```
 
 The upload button is hidden on mobile. Selecting a file replaces the video
@@ -138,8 +138,8 @@ thumbnail URL and marked the custom-image sentinel:
 
 ```json
 {
-  "thumbnail_offset": "-1",
-  "dynamic_thumbnail_url": "//cdn-cf-east.streamable.com/image/upload-<shortcode>-<generated>.jpg"
+    "thumbnail_offset": "-1",
+    "dynamic_thumbnail_url": "//cdn-cf-east.streamable.com/image/upload-<shortcode>-<generated>.jpg"
 }
 ```
 
@@ -168,9 +168,9 @@ sending the frame PATCH again. Final observed state was:
 
 ```json
 {
-  "status": 2,
-  "thumbnail_offset": "26",
-  "dynamic_thumbnail_url": "//cdn-cf-east.streamable.com/image/<shortcode>-screenshot<generated>.jpg"
+    "status": 2,
+    "thumbnail_offset": "26",
+    "dynamic_thumbnail_url": "//cdn-cf-east.streamable.com/image/<shortcode>-screenshot<generated>.jpg"
 }
 ```
 

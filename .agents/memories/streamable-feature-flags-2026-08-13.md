@@ -55,4 +55,3 @@ limited to the feature-flag fetch, consumption, and local override workflow.
   an object value, removed stale content-length metadata, rendered five rows, and
   restored the server value after clearing overrides.
 - Syntax and formatting checks are `node --check` and Prettier respectively.
-

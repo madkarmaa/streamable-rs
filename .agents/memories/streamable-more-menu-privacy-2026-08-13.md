@@ -28,7 +28,7 @@ and returns to `/`; it does not make a network request.
 The authenticated account's relevant feature flag was:
 
 ```json
-{"expose-video-privacy-change":true}
+{ "expose-video-privacy-change": true }
 ```
 
 The modal reads these fields from the cached video's `privacy_settings`:
@@ -85,16 +85,16 @@ video produces `Something unexpected occurred` without sending a request.
 
 The modal exposes three wire values:
 
-| UI label | Wire value | Description |
-| --- | --- | --- |
-| Public | `public` | Anyone with a link can view. |
+| UI label           | Wire value             | Description                                      |
+| ------------------ | ---------------------- | ------------------------------------------------ |
+| Public             | `public`               | Anyone with a link can view.                     |
 | Hide on Streamable | `hidden_on_streamable` | Private on the account, but embeddable anywhere. |
-| Private | `private` | Only the owner can view. |
+| Private            | `private`              | Only the owner can view.                         |
 
 Changing an available option sends only:
 
 ```json
-{"visibility":"<wire-value>"}
+{ "visibility": "<wire-value>" }
 ```
 
 On the free account, **Hide on Streamable** was labeled `BASIC`. Selecting it
@@ -142,13 +142,13 @@ src_internal=domain-privacy
 For an eligible plan, source inspection shows that the toggle sends one field:
 
 ```json
-{"domain_restrictions":"allowlist"}
+{ "domain_restrictions": "allowlist" }
 ```
 
 or:
 
 ```json
-{"domain_restrictions":"off"}
+{ "domain_restrictions": "off" }
 ```
 
 and then refetches the video.
@@ -161,7 +161,7 @@ An invalid value remains local and shows `Must be a domain like site1.com`.
 A valid edit is debounced for 1000 ms and sends:
 
 ```json
-{"allowed_domain":"<input string>"}
+{ "allowed_domain": "<input string>" }
 ```
 
 The field shows `Saving...` during the request and, after the refetch,
@@ -185,7 +185,7 @@ shows a `Create password` field and enables `Set password` only when the value
 is nonempty. Submission sends:
 
 ```json
-{"password":"<new password>"}
+{ "password": "<new password>" }
 ```
 
 After the PATCH and video refetch, the UI uses only the returned
@@ -194,7 +194,7 @@ protected video instead offers `Change password`, which returns the local UI to
 the empty password form. Turning protection off sends:
 
 ```json
-{"password":null}
+{ "password": null }
 ```
 
 followed by the normal video refetch.
@@ -206,13 +206,13 @@ followed by the normal video refetch.
 The toggle sends exactly:
 
 ```json
-{"allow_download":true}
+{ "allow_download": true }
 ```
 
 or:
 
 ```json
-{"allow_download":false}
+{ "allow_download": false }
 ```
 
 The live account exercised both directions. Each PATCH returned 204 and each
@@ -223,13 +223,13 @@ following video GET returned 200. The final value was restored to `false`.
 The toggle sends exactly:
 
 ```json
-{"allow_sharing":false}
+{ "allow_sharing": false }
 ```
 
 or:
 
 ```json
-{"allow_sharing":true}
+{ "allow_sharing": true }
 ```
 
 The live account exercised both directions with the same 204-then-200 flow.
@@ -243,13 +243,13 @@ positive UI label, `View count`, whose switch is checked when
 `hide_view_count` is false. Toggling sends the underlying inverse field:
 
 ```json
-{"hide_view_count":true}
+{ "hide_view_count": true }
 ```
 
 or:
 
 ```json
-{"hide_view_count":false}
+{ "hide_view_count": false }
 ```
 
 Private visibility disables this control when it is exposed.
@@ -286,14 +286,14 @@ After live reset, the verified privacy state was:
 
 ```json
 {
-  "visibility": "public",
-  "allow_download": false,
-  "allow_sharing": true,
-  "domain_restrictions": "off",
-  "allowed_domain": "",
-  "password_protected": false,
-  "hide_view_count": false,
-  "is_custom": false
+    "visibility": "public",
+    "allow_download": false,
+    "allow_sharing": true,
+    "domain_restrictions": "off",
+    "allowed_domain": "",
+    "password_protected": false,
+    "hide_view_count": false,
+    "is_custom": false
 }
 ```
 

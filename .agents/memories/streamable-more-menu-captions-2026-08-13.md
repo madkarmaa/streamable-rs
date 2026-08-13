@@ -18,7 +18,7 @@ expose-video-manage-captions
 The live authenticated account returned:
 
 ```json
-{"expose-video-manage-captions":false}
+{ "expose-video-manage-captions": false }
 ```
 
 Accordingly, Captions did not appear in its More menu. This is distinct from
@@ -47,7 +47,7 @@ Cookie: <session; redacted>
 The live direct request returned HTTP 200:
 
 ```json
-{"captions":[]}
+{ "captions": [] }
 ```
 
 The response envelope is therefore an object with a `captions` array, not a

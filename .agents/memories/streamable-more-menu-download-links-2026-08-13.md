@@ -31,11 +31,11 @@ mp4-mobile
 
 The UI maps presets to labels as follows:
 
-| Preset | Normal label | Special case |
-| --- | --- | --- |
-| `mp4-high` | Ultra HD | none |
-| `mp4` | HD | relabeled SD when height is at most 480 |
-| `mp4-mobile` | SD | none |
+| Preset       | Normal label | Special case                            |
+| ------------ | ------------ | --------------------------------------- |
+| `mp4-high`   | Ultra HD     | none                                    |
+| `mp4`        | HD           | relabeled SD when height is at most 480 |
+| `mp4-mobile` | SD           | none                                    |
 
 A ready file's description is computed locally:
 

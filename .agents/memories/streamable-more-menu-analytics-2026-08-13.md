@@ -55,7 +55,7 @@ GET https://api-f.streamable.com/api/v1/videos/<shortcode>/analytics/live
 On success, the response shape is:
 
 ```json
-{"count": 0}
+{ "count": 0 }
 ```
 
 The client updates the displayed count, waits 5,000 ms, and polls again. Any
@@ -97,9 +97,9 @@ The summary error body was:
 
 ```json
 {
-  "statusCode": 500,
-  "error": "Internal Server Error",
-  "message": "An internal server error occurred"
+    "statusCode": 500,
+    "error": "Internal Server Error",
+    "message": "An internal server error occurred"
 }
 ```
 

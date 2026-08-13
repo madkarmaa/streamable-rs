@@ -32,7 +32,7 @@ not create or initialize a new video record.
 The hidden dropzone input is:
 
 ```html
-<input type="file" accept="video/*" multiple="false">
+<input type="file" accept="video/*" multiple="false" />
 ```
 
 Drag-and-drop can still provide multiple files, so validation runs in this
@@ -156,7 +156,7 @@ samples. UI progress callbacks are throttled after the first 1000 callbacks.
 The options passed into the upload task merge response `options` with:
 
 ```json
-{"upload_source":"web"}
+{ "upload_source": "web" }
 ```
 
 ### S3 fallback branch
@@ -249,13 +249,13 @@ The live version-2 GET returned HTTP 200 with:
 
 ```json
 {
-  "status": 2,
-  "percent": 100,
-  "version": 2,
-  "max_version": 2,
-  "duration": 52,
-  "original_size": 3632116,
-  "available_file_resolutions": ["mp4"]
+    "status": 2,
+    "percent": 100,
+    "version": 2,
+    "max_version": 2,
+    "duration": 52,
+    "original_size": 3632116,
+    "available_file_resolutions": ["mp4"]
 }
 ```
 

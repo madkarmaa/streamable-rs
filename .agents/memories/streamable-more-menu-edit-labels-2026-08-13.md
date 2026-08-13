@@ -15,8 +15,8 @@ feature flags were:
 
 ```json
 {
-  "is-labels-enabled": true,
-  "labels-sidebar-unlabelled-videos-view": true
+    "is-labels-enabled": true,
+    "labels-sidebar-unlabelled-videos-view": true
 }
 ```
 
@@ -31,9 +31,7 @@ The response envelope is:
 
 ```json
 {
-  "userLabels": [
-    { "id": "<label-id>", "name": "<label-name>" }
-  ]
+    "userLabels": [{ "id": "<label-id>", "name": "<label-name>" }]
 }
 ```
 
@@ -106,7 +104,7 @@ Cookie: <session; redacted>
 The observed response was HTTP 201:
 
 ```json
-{"name":"<label-name>","id":"<label-id>"}
+{ "name": "<label-name>", "id": "<label-id>" }
 ```
 
 Important current UI details:
@@ -155,7 +153,7 @@ The live single-video assignment sent a one-ID `labels` array. Removing it sent
 exactly:
 
 ```json
-{"labels":[]}
+{ "labels": [] }
 ```
 
 Both calls returned HTTP 200 with a zero-length response. The client tests only

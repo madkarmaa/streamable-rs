@@ -75,4 +75,3 @@ Cookie: <authenticated session>
 - Any remote test must remain behind
   `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use `REMOTE_TEST_LOCK`, create one
   disposable video, issue one delete, and verify the resulting Not Found state.
-
