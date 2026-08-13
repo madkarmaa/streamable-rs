@@ -723,6 +723,59 @@ impl ApiRequest for CancelVideoUploadRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(crate) struct DeleteVideoRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+}
+
+impl DeleteVideoRequest {
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}"),
+            shortcode: shortcode.to_string(),
+        }
+    }
+}
+
+impl ApiRequest for DeleteVideoRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::DELETE
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if response.status().is_client_error() || response.status().is_server_error() {
+            return response.into_empty();
+        }
+
+        let response_body = response.text();
+        if response_body != "true" {
+            return Err(StreamableError::UnexpectedVideoDeletionResponse {
+                shortcode: self.shortcode.clone(),
+                response: response_body.into_owned(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(crate) struct TranscodeVideoRequest {
     #[serde(skip)]
     url: String,

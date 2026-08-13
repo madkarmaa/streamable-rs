@@ -75,6 +75,15 @@ pub enum StreamableError {
         shortcode: Option<String>,
     },
 
+    /// Streamable accepted a video deletion request but did not return the exact success body.
+    #[error("video deletion for '{shortcode}' returned unexpected response body: {response:?}")]
+    UnexpectedVideoDeletionResponse {
+        /// Shortcode sent in the deletion request.
+        shortcode: String,
+        /// Response body returned by Streamable.
+        response: String,
+    },
+
     /// A local file operation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),

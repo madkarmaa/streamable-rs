@@ -511,6 +511,155 @@ async fn video_upload_maps_shortcode_rate_limit_before_mutation() {
     );
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn unauthenticated_delete_video_sends_bodyless_request_and_accepts_only_literal_true() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_string("true"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    client
+        .delete_video("abc123")
+        .await
+        .expect("literal true should confirm video deletion");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    let delete_request = requests
+        .iter()
+        .find(|request| request.method.as_str() == "DELETE")
+        .expect("delete request should be recorded");
+    assert!(delete_request.body.is_empty());
+    assert!(!delete_request.headers.contains_key("content-type"));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn delete_video_rejects_non_literal_success_bodies() {
+    let mock_server = MockServer::start().await;
+    let responses = [
+        ("false-body", 200, "false"),
+        ("json-string", 200, "\"true\""),
+        ("empty-body", 204, ""),
+    ];
+
+    for (shortcode, status, body) in responses {
+        Mock::given(method("DELETE"))
+            .and(path(format!("/api/v1/videos/{shortcode}")))
+            .respond_with(ResponseTemplate::new(status).set_body_string(body))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+    }
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    for (shortcode, _, expected_body) in responses {
+        let error = client
+            .delete_video(shortcode)
+            .await
+            .expect_err("non-literal success response should fail");
+        assert!(matches!(
+            error,
+            StreamableError::UnexpectedVideoDeletionResponse {
+                shortcode: ref actual_shortcode,
+                response: ref actual_body,
+            } if actual_shortcode == shortcode && actual_body == expected_body
+        ));
+    }
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn delete_video_preserves_common_and_http_errors() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/expired"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "error": "InvalidSessionError",
+            "message": "Session expired"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/missing"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "statusCode": 404,
+            "error": "Not Found",
+            "message": "Not Found"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/rate-limited"))
+        .respond_with(ResponseTemplate::new(429))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    let session_error = client
+        .delete_video("expired")
+        .await
+        .expect_err("expired session should fail");
+    assert!(matches!(
+        session_error,
+        StreamableError::InvalidSession { ref message } if message == "Session expired"
+    ));
+
+    let status_error = client
+        .delete_video("missing")
+        .await
+        .expect_err("ordinary HTTP error should fail");
+    assert!(matches!(
+        status_error,
+        StreamableError::Request(ref error) if error.status() == Some(reqwest::StatusCode::NOT_FOUND)
+    ));
+
+    let rate_limit_error = client
+        .delete_video("rate-limited")
+        .await
+        .expect_err("rate-limited deletion should fail");
+    assert!(matches!(
+        rate_limit_error,
+        StreamableError::RateLimitExceeded { ref endpoint }
+            if endpoint.ends_with("/api/v1/videos/rate-limited")
+    ));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn delete_video_propagates_transport_errors() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("an unused local port should be available");
+    let address = listener
+        .local_addr()
+        .expect("unused local port should have an address");
+    drop(listener);
+    let base_url =
+        Url::parse(&format!("http://{address}")).expect("unused local address should form a URL");
+    let client = StreamableClient::with_base_url(base_url).expect("mock client should initialize");
+
+    let error = client
+        .delete_video("transport")
+        .await
+        .expect_err("transport failure should propagate");
+
+    assert!(matches!(error, StreamableError::Request(_)));
+}
+
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
 async fn remote_video_upload_reaches_transcoding_and_is_deleted() {
@@ -520,26 +669,26 @@ async fn remote_video_upload_reaches_transcoding_and_is_deleted() {
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
-    let mut delete_url = Url::parse(crate::constants::API_BASE_URL)
+    client
+        .delete_video(&video.shortcode)
+        .await
+        .expect("remote video deletion should succeed");
+    let mut verification_url = Url::parse(crate::constants::API_BASE_URL)
         .expect("production API base URL should be valid");
-    delete_url.set_path(&format!("/api/v1/videos/{}", video.shortcode));
-    let deleted = client
+    verification_url.set_path(&format!("/api/v1/videos/{}", video.shortcode));
+    let deleted_status = client
         .client
-        .delete(delete_url)
+        .get(verification_url)
         .send()
         .await
-        .expect("remote cleanup request should succeed")
-        .error_for_status()
-        .expect("remote cleanup should return success")
-        .text()
-        .await
-        .expect("remote cleanup response should be text");
+        .expect("remote deletion verification request should succeed")
+        .status();
 
     assert_eq!(
         video.url,
         format!("https://streamable.com/{}", video.shortcode)
     );
-    assert_eq!(deleted, "true");
+    assert_eq!(deleted_status, reqwest::StatusCode::NOT_FOUND);
 }
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]

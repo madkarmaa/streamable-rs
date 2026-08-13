@@ -413,6 +413,17 @@ impl StreamableClient<Authenticated> {
 }
 
 impl<State: Sync> StreamableClient<State> {
+    /// Permanently deletes a video by shortcode.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails, Streamable rejects the deletion, or the successful
+    /// response body is not exactly `true`.
+    pub async fn delete_video(&self, shortcode: &str) -> Result<()> {
+        self.execute(&models::DeleteVideoRequest::new(shortcode))
+            .await
+    }
+
     /// Uploads a local video and starts Streamable transcoding.
     ///
     /// `title` is sent as the video's title when provided. Otherwise, the title defaults to the
