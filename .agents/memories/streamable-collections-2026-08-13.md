@@ -44,27 +44,35 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
   a loading spinner.
 - Wire request:
 
-  ```http
-  POST /api/v1/collections
-  Content-Type: application/json
+    ```http
+    POST /api/v1/collections
+    Content-Type: application/json
 
-  {"shortcodes":["<video-shortcode-a>","<video-shortcode-b>"]}
-  ```
+    {"shortcodes":["<video-shortcode-a>","<video-shortcode-b>"]}
+    ```
 
 - The dashboard model also allows an optional `title` in the create payload, but
   the inspected Share flow sent only `shortcodes`.
 - The live service returned HTTP 201 and:
 
-  ```json
-  {
-    "shortcode": "<collection-shortcode>",
-    "title": null,
-    "videos": [
-      {"shortcode": "<video-shortcode-a>", "title": "<title-a>", "plays": 0},
-      {"shortcode": "<video-shortcode-b>", "title": "<title-b>", "plays": 0}
-    ]
-  }
-  ```
+    ```json
+    {
+        "shortcode": "<collection-shortcode>",
+        "title": null,
+        "videos": [
+            {
+                "shortcode": "<video-shortcode-a>",
+                "title": "<title-a>",
+                "plays": 0
+            },
+            {
+                "shortcode": "<video-shortcode-b>",
+                "title": "<title-b>",
+                "plays": 0
+            }
+        ]
+    }
+    ```
 
 - The response preserved the requested video order. On success, the dashboard
   opens `/c/<collection-shortcode>` in a new tab. On failure, it logs the error
@@ -74,36 +82,37 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 
 - The server-rendered index obtains the count from:
 
-  ```http
-  GET /api/v1/collections/count
-  ```
+    ```http
+    GET /api/v1/collections/count
+    ```
 
-  The live response was HTTP 200 with `{"count":1}` while the fixture existed
-  and `{"count":0}` after deletion.
+    The live response was HTTP 200 with `{"count":1}` while the fixture existed
+    and `{"count":0}` after deletion.
+
 - When the server-provided total is zero, `/collections` renders:
   **No collections have been shared yet**. It does not issue a browser list XHR
   for that empty initial state.
 - With a nonzero total, the client requests pages of 20:
 
-  ```http
-  GET /api/v1/collections?page=1&count=20
-  ```
+    ```http
+    GET /api/v1/collections?page=1&count=20
+    ```
 
 - The live response was HTTP 200 and had no separate total field:
 
-  ```json
-  {
-    "collections": [
-      {
-        "shortcode": "<collection-shortcode>",
-        "title": "<collection-title>",
-        "created_at": "<ISO-8601 timestamp>",
-        "updated_at": "<ISO-8601 timestamp>",
-        "thumbnail_url": "<signed thumbnail URL>"
-      }
-    ]
-  }
-  ```
+    ```json
+    {
+        "collections": [
+            {
+                "shortcode": "<collection-shortcode>",
+                "title": "<collection-title>",
+                "created_at": "<ISO-8601 timestamp>",
+                "updated_at": "<ISO-8601 timestamp>",
+                "thumbnail_url": "<signed thumbnail URL>"
+            }
+        ]
+    }
+    ```
 
 - The index uses infinite loading for subsequent pages. A row shows its
   thumbnail, title (fallback **Untitled collection**), public `/c/<shortcode>`
@@ -118,29 +127,29 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 
 - A public collection page fetches:
 
-  ```http
-  GET /api/v1/collections/<collection-shortcode>
-  ```
+    ```http
+    GET /api/v1/collections/<collection-shortcode>
+    ```
 
 - The authenticated owner-view response observed at HTTP 200 was:
 
-  ```json
-  {
-    "shortcode": "<collection-shortcode>",
-    "title": null,
-    "is_owner": true,
-    "white_label": false,
-    "show_streamable_brand": true,
-    "videos": [
-      {
-        "shortcode": "<video-shortcode>",
-        "title": "<video-title>",
-        "plays": 0,
-        "date_added": "<ISO-8601 timestamp>"
-      }
-    ]
-  }
-  ```
+    ```json
+    {
+        "shortcode": "<collection-shortcode>",
+        "title": null,
+        "is_owner": true,
+        "white_label": false,
+        "show_streamable_brand": true,
+        "videos": [
+            {
+                "shortcode": "<video-shortcode>",
+                "title": "<video-title>",
+                "plays": 0,
+                "date_added": "<ISO-8601 timestamp>"
+            }
+        ]
+    }
+    ```
 
 - The page subsequently obtains each embedded player's data from
   `GET /api/v1/videos/<video-shortcode>/player`. The inspected render issued two
@@ -169,12 +178,12 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
   **Done**.
 - The inline title field autosaves after a 1,000 ms debounce:
 
-  ```http
-  PATCH /api/v1/collections/<collection-shortcode>
-  Content-Type: application/json
+    ```http
+    PATCH /api/v1/collections/<collection-shortcode>
+    Content-Type: application/json
 
-  {"title":"<new title>"}
-  ```
+    {"title":"<new title>"}
+    ```
 
 - The live PATCH returned HTTP 200 with the collection `shortcode`, updated
   `title`, and ordered video summaries containing `shortcode`, `title`, and
@@ -187,9 +196,9 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 - **Add video** opens **Add videos to your collection** and loads candidates in
   pages of 12:
 
-  ```http
-  GET /api/v1/videos?page=1&count=12&excludeShortcodes=<comma-separated-current-shortcodes>&search=<query>
-  ```
+    ```http
+    GET /api/v1/videos?page=1&count=12&excludeShortcodes=<comma-separated-current-shortcodes>&search=<query>
+    ```
 
 - The query is URL encoded. The empty query is sent as `search=`. Current
   collection shortcodes are excluded so already-added videos do not appear.
@@ -200,12 +209,12 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
   more candidates and reports the selected count.
 - Adding sends the complete ordered membership, not only the new shortcodes:
 
-  ```http
-  PATCH /api/v1/collections/<collection-shortcode>
-  Content-Type: application/json
+    ```http
+    PATCH /api/v1/collections/<collection-shortcode>
+    Content-Type: application/json
 
-  {"shortcodes":["<existing-shortcode>","<added-shortcode>"]}
-  ```
+    {"shortcodes":["<existing-shortcode>","<added-shortcode>"]}
+    ```
 
 - The live service returned HTTP 200, preserved that order, and the page fetched
   `/videos/<added-shortcode>/player` after the update.
@@ -222,9 +231,9 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 - Remove is not a separate endpoint. It marks/removes the local row, waits about
   700 ms, then PATCHes the complete remaining shortcode array:
 
-  ```json
-  {"shortcodes":["<remaining-shortcode>"]}
-  ```
+    ```json
+    { "shortcodes": ["<remaining-shortcode>"] }
+    ```
 
 - When only one video exists, local state removes it immediately; with multiple
   videos, the row is marked deleted until the request succeeds. A failure
@@ -246,9 +255,9 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 - The confirmation explains that the named collection will be deleted forever
   and cannot be restored. The confirm action sends:
 
-  ```http
-  DELETE /api/v1/collections/<collection-shortcode>
-  ```
+    ```http
+    DELETE /api/v1/collections/<collection-shortcode>
+    ```
 
 - Live deletion returned HTTP 200 with an empty body and redirected the owner to
   the dashboard. A subsequent detail GET returned HTTP 404 with
