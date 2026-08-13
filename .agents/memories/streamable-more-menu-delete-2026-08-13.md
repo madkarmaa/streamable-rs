@@ -2,18 +2,20 @@
 
 Implementation status: **Implemented in `streamable-rs`.**
 
-The authenticated client exposes `delete_video(&str) -> Result<()>`. Its internal
-request model sends a bodyless `DELETE` to `/api/v1/videos/<shortcode>`, relies on
-the client's session cookie, and accepts only the exact response text `true`.
-Other successful response bodies produce
+Both authenticated and unauthenticated client states expose
+`delete_video(&str) -> Result<()>`. Its internal request model sends a bodyless
+`DELETE` to `/api/v1/videos/<shortcode>`, includes any cookies already held by the
+client, and accepts only the exact response text `true`. Other successful
+response bodies produce
 `StreamableError::UnexpectedVideoDeletionResponse`; common session/rate-limit
 errors and ordinary HTTP/transport errors retain the existing mappings.
 
-Offline client tests cover the full path, method, cookie, missing body and
-`Content-Type`, literal success contract, non-literal success bodies, common
-errors, ordinary HTTP errors, and transport failure. The existing gated remote
-upload test now authenticates, deletes through the public method, and verifies
-that `GET /api/v1/videos/<shortcode>` returns Not Found.
+Offline client tests cover unauthenticated access, the full path, method, absent
+cookie, missing body and `Content-Type`, literal success contract, non-literal
+success bodies, common errors, ordinary HTTP errors, and transport failure. The
+existing gated remote upload test deletes through the public method in the
+unauthenticated client state and verifies that
+`GET /api/v1/videos/<shortcode>` returns Not Found.
 
 Verified against the authenticated web dashboard on 2026-08-13. This records the
 wire contract and UI behavior for one feature only: deleting a video.
@@ -32,12 +34,15 @@ wire contract and UI behavior for one feature only: deleting a video.
 
 ```http
 DELETE /api/v1/videos/<shortcode>
-Cookie: <authenticated session>
+Cookie: <cookies held by the client, if any>
 
 <no request body>
 ```
 
 - The browser uses `credentials: "include"`.
+- The operation is available from both client typestates; authentication is not
+  required. An unauthenticated client still sends anonymous-session cookies when
+  its cookie jar contains them.
 - The request has no JSON payload and does not add a request `Content-Type`.
 - The observed success response was HTTP `200`, content type
   `application/json; charset=utf-8`, content length `4`, with the literal response
@@ -78,15 +83,18 @@ Cookie: <authenticated session>
 
 - The inspected sibling Python client has no video-delete method to copy. Treat
   the observed dashboard request as the current parity reference.
-- A Rust method should keep the fixed path internal, accept a shortcode, include
-  the authenticated session, send a bodyless `DELETE`, and expose a typed failure
-  when the response text is not exactly `true`.
+- A Rust method should live on the generic client state, keep the fixed path
+  internal, accept a shortcode, preserve available cookies, send a bodyless
+  `DELETE`, and expose a typed failure when the response text is not exactly
+  `true`.
 - Deterministic mock coverage should assert the full effective path, method,
-  bodylessness, authentication behavior, literal `true` success, and failures for
-  `false`, `"true"`, empty `204`, transport errors, and ordinary error statuses.
+  bodylessness, unauthenticated availability, cookie behavior, literal `true`
+  success, and failures for `false`, `"true"`, empty `204`, transport errors, and
+  ordinary error statuses.
 - Client-state tests should separately cover retaining the item while deletion is
   pending, successful cache/list removal, label-count adjustment, failure
   retention, local-id removal, and partial-success bulk behavior.
 - Any remote test must remain behind
   `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use `REMOTE_TEST_LOCK`, create one
-  disposable video, issue one delete, and verify the resulting Not Found state.
+  disposable video in the unauthenticated client state, issue one delete, and
+  verify the resulting Not Found state.
