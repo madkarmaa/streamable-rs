@@ -26,10 +26,9 @@ These steps are mandatory before normal project work:
 When a task requires interacting with Chrome, inspecting a live page, reproducing browser behavior, or using browser developer tooling:
 
 1. **Use the runtime's built-in Chrome/browser-control API first.** Prefer the built-in browser automation path for normal navigation, interaction, inspection, and verification.
-2. **Fall back to the `chrome-devtools` MCP only if the built-in browser API fails, is unavailable, cannot attach to the required page/session, or lacks a capability needed for the task.** The fallback MCP is configured repository-locally in `.agents/mcp.json`.
+2. **Fall back to the `chrome-devtools` MCP only if the built-in browser API fails, is unavailable, cannot attach to the required page/session, or lacks a capability needed for the task.**
 3. Do not skip directly to the MCP unless the user explicitly requests it or the task is known to require a DevTools-only capability that the built-in API cannot provide.
 4. When falling back after a partial browser action, inspect the current state before repeating actions. Avoid duplicating submissions, mutations, uploads, account changes, or other side effects.
-5. Treat `.agents/mcp.json` as configuration, not as a source of durable machine-specific memory. Do not copy host-specific MCP connection details, ports, executable paths, environment variables, or other environment data into memories.
 
 ---
 
