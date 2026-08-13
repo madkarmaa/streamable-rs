@@ -1,14 +1,11 @@
 ## Project
 
-`streamable-rs` is a Rust rewrite of the sibling `streamable-py` project.
-
-The primary goal is behavioral parity with the inspected Python implementation while exposing an idiomatic Rust API. Streamable's API is undocumented, so exact wire behavior matters more than assumptions based on endpoint naming or conventional REST behavior.
+Streamable's API is undocumented, so exact wire behavior matters more than assumptions based on endpoint naming or conventional REST behavior.
 
 Repository layout:
 
 - `core/` — library crate (`streamable`)
 - `cli/` — CLI crate
-- `../streamable-py/` — sibling Python implementation and behavioral reference, when available
 
 ---
 
@@ -75,18 +72,6 @@ Apply the same portability rule to those artifacts: avoid machine-specific state
 
 ## Operating principles
 
-### 1. Treat the Python project as the parity reference
-
-Before implementing or changing a Streamable feature:
-
-1. Inspect the corresponding code in `../streamable-py`.
-2. Check request models, response models, endpoint construction, error handling, and call order.
-3. Preserve wire-visible behavior unless the user explicitly asks for a Rust-specific behavior change.
-4. Do not infer undocumented endpoint paths from a base URL or neighboring endpoints.
-5. If the Python behavior is ambiguous, obsolete, or contradicted by live behavior, call that out rather than silently inventing a new contract.
-
-### 2. Distinguish stable parity from live-service facts
-
 The API is undocumented and can drift.
 
 Treat these as candidates for live revalidation when integration behavior matters:
@@ -106,11 +91,8 @@ Do not revalidate by sending live requests during ordinary/default tests. Live c
 
 Preserve endpoint-specific domain errors already established by the Rust client.
 
-Do not mechanically reproduce Python's accidental error behavior when an idiomatic Rust typed error already exists.
-
 When adding a new endpoint:
 
-1. inspect Python's exact status/body handling;
 2. add deterministic local tests for mapped statuses;
 3. make the Rust failure mode explicit;
 4. avoid broad catch-all behavior unless compatibility requires it.
@@ -225,7 +207,6 @@ Do not push or rewrite published history unless the user explicitly asks.
 
 For a new Streamable API/client feature, use this sequence unless the user gives a different order:
 
-1. inspect the sibling Python implementation;
 2. identify exact endpoint, method, payload, aliases, success shape, and error mapping;
 3. identify whether authentication is required;
 4. design the Rust API so fixed protocol details remain internal;
@@ -247,10 +228,7 @@ Use this precedence:
 
 1. the user's current explicit instruction;
 2. current repository behavior/tests and explicit project documentation;
-3. the currently inspected sibling Python implementation for parity questions;
-4. this `AGENTS.md`;
-5. historical memories.
+3. this `AGENTS.md`;
+4. historical memories.
 
 If an undocumented live API contradicts the remembered contract, report the discrepancy and update tests/behavior only in line with the user's requested compatibility goal.
-
-Do not silently "fix" parity differences just because another design appears cleaner.
