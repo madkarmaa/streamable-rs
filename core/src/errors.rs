@@ -86,6 +86,32 @@ pub enum StreamableError {
         message: String,
     },
 
+    /// Streamable rejected a video analytics request.
+    #[error(
+        "getting analytics for video '{shortcode}' failed with HTTP status {status}: {message}"
+    )]
+    VideoAnalyticsFailed {
+        /// Video shortcode.
+        shortcode: String,
+        /// HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
+    /// Streamable rejected a live view count request.
+    #[error(
+        "getting live views for video '{shortcode}' failed with HTTP status {status}: {message}"
+    )]
+    VideoLiveViewsFailed {
+        /// Video shortcode.
+        shortcode: String,
+        /// HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
     /// Too many requests reached an endpoint.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded {

@@ -846,6 +846,187 @@ impl ApiRequest for GetVideoRequest {
     }
 }
 
+/// A source and its play count.
+///
+/// ```
+/// use streamable::models::VideoAnalyticsSource;
+/// let country = VideoAnalyticsSource { source: "US".into(), count: 4 };
+/// assert_eq!(country.count, 4);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoAnalyticsSource {
+    /// Source name or code.
+    pub source: String,
+    /// Number of plays.
+    pub count: u64,
+}
+
+/// Plays recorded on one date.
+///
+/// ```
+/// use streamable::models::VideoAnalyticsPlay;
+/// let play = VideoAnalyticsPlay { date: "2026-08-14".into(), count: 2 };
+/// assert_eq!(play.date, "2026-08-14");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoAnalyticsPlay {
+    /// Date returned by Streamable.
+    pub date: String,
+    /// Number of plays.
+    pub count: u64,
+}
+
+/// A video's analytics summary.
+///
+/// ```no_run
+/// fn print_total(summary: &streamable::models::VideoAnalyticsSummary) {
+///     let total: u64 = summary.plays.iter().map(|play| play.count).sum();
+///     println!("{total}");
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoAnalyticsSummary {
+    /// Plays grouped by country.
+    pub countries: Vec<VideoAnalyticsSource>,
+    /// Plays grouped by platform.
+    pub platforms: Vec<VideoAnalyticsSource>,
+    /// Plays grouped by referrer.
+    pub referrers: Vec<VideoAnalyticsSource>,
+    /// Time grouping returned by Streamable.
+    pub group: String,
+    /// Plays grouped by date.
+    pub plays: Vec<VideoAnalyticsPlay>,
+    /// Start date returned by Streamable.
+    pub from_date: String,
+    /// End date returned by Streamable.
+    pub to_date: String,
+}
+
+/// A video's current live view count.
+///
+/// ```
+/// use streamable::models::VideoLiveViews;
+/// let live = VideoLiveViews { count: 3 };
+/// assert_eq!(live.count, 3);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoLiveViews {
+    /// Current live viewers.
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GetVideoAnalyticsRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+}
+
+impl GetVideoAnalyticsRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}/analytics"),
+            shortcode: shortcode.to_string(),
+        }
+    }
+}
+
+impl ApiRequest for GetVideoAnalyticsRequest {
+    type Response = VideoAnalyticsSummary;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::GET
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response
+                .api_error()
+                .map(|error| error.message)
+                .filter(|message| !message.is_empty())
+                .unwrap_or_else(|| response.text().into_owned());
+            return Err(StreamableError::VideoAnalyticsFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            });
+        }
+
+        response.json()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GetVideoLiveViewsRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+}
+
+impl GetVideoLiveViewsRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}/analytics/live"),
+            shortcode: shortcode.to_string(),
+        }
+    }
+}
+
+impl ApiRequest for GetVideoLiveViewsRequest {
+    type Response = VideoLiveViews;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::GET
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response
+                .api_error()
+                .map(|error| error.message)
+                .filter(|message| !message.is_empty())
+                .unwrap_or_else(|| response.text().into_owned());
+            return Err(StreamableError::VideoLiveViewsFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            });
+        }
+
+        response.json()
+    }
+}
+
 /// Temporary AWS credentials returned for an S3 upload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

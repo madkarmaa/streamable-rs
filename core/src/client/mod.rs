@@ -551,6 +551,44 @@ impl StreamableClient<Authenticated> {
 }
 
 impl<State: Sync> StreamableClient<State> {
+    /// Gets a video's analytics summary. Works without signing in.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let analytics = client.get_video_analytics("abc123").await?;
+    /// println!("{} date groups", analytics.plays.len());
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the request or the response cannot be decoded.
+    pub async fn get_video_analytics(
+        &self,
+        shortcode: &str,
+    ) -> Result<models::VideoAnalyticsSummary> {
+        self.execute(&models::GetVideoAnalyticsRequest::new(shortcode))
+            .await
+    }
+
+    /// Gets a video's current live view count. Works without signing in.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// println!("{}", client.get_video_live_views("abc123").await?.count);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the request or the response cannot be decoded.
+    pub async fn get_video_live_views(&self, shortcode: &str) -> Result<models::VideoLiveViews> {
+        self.execute(&models::GetVideoLiveViewsRequest::new(shortcode))
+            .await
+    }
+
     /// Changes the given video privacy fields. Works without signing in.
     ///
     /// ```no_run

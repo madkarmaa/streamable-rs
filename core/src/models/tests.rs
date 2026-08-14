@@ -1,9 +1,33 @@
 use super::{
     CancelVideoUploadRequest, ChangePasswordRequest, CreateLabelRequest, CreateUserRequest,
     DomainRestrictions, InitializeVideoUploadRequest, PrivacySettingsRequest, RenameLabelRequest,
-    SetVideoLabelsRequest, TranscodeVideoRequest, UploadInfo, VideoPasswordUpdate,
-    VideoPrivacySettingsUpdate, Visibility,
+    SetVideoLabelsRequest, TranscodeVideoRequest, UploadInfo, VideoAnalyticsSummary,
+    VideoPasswordUpdate, VideoPrivacySettingsUpdate, Visibility,
 };
+
+#[test]
+fn video_analytics_summary_deserializes_wire_fields() {
+    let summary: VideoAnalyticsSummary = serde_json::from_value(serde_json::json!({
+        "countries": [{ "source": "US", "count": 3 }],
+        "platforms": [{ "source": "desktop", "count": 2 }],
+        "referrers": [{ "source": "direct", "count": 1 }],
+        "group": "day",
+        "plays": [
+            { "date": "2026-08-13", "count": 0 },
+            { "date": "2026-08-14", "count": 3 }
+        ],
+        "from_date": "2026-08-13",
+        "to_date": "2026-08-14"
+    }))
+    .expect("video analytics should deserialize");
+
+    assert_eq!(summary.countries[0].source, "US");
+    assert_eq!(summary.platforms[0].count, 2);
+    assert_eq!(summary.referrers[0].source, "direct");
+    assert_eq!(summary.plays[0].count, 0);
+    assert_eq!(summary.from_date, "2026-08-13");
+    assert_eq!(summary.to_date, "2026-08-14");
+}
 
 #[test]
 fn create_user_request_serializes_static_verification_redirect() {

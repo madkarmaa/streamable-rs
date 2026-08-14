@@ -1516,6 +1516,133 @@ async fn remote_label_lifecycle() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn unauthenticated_video_analytics_requests_are_bodyless() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123/analytics"))
+        .and(NoCookieHeader)
+        .and(body_bytes(Vec::<u8>::new()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "countries": [{ "source": "US", "count": 3 }],
+            "platforms": [{ "source": "desktop", "count": 2 }],
+            "referrers": [{ "source": "direct", "count": 1 }],
+            "group": "day",
+            "plays": [
+                { "date": "2026-08-13", "count": 0 },
+                { "date": "2026-08-14", "count": 3 }
+            ],
+            "from_date": "2026-08-13",
+            "to_date": "2026-08-14"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123/analytics/live"))
+        .and(NoCookieHeader)
+        .and(body_bytes(Vec::<u8>::new()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "count": 0 })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    let summary = client
+        .get_video_analytics("abc123")
+        .await
+        .expect("video analytics should succeed");
+    let live = client
+        .get_video_live_views("abc123")
+        .await
+        .expect("live views should succeed");
+
+    assert_eq!(summary.group, "day");
+    assert_eq!(summary.plays[0].count, 0);
+    assert_eq!(summary.countries[0].source, "US");
+    assert_eq!(live.count, 0);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_analytics_requests_map_endpoint_and_common_errors() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/rejected/analytics"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": "InternalServerError",
+            "message": "Analytics unavailable"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/rejected/analytics/live"))
+        .respond_with(ResponseTemplate::new(503).set_body_string("Live count unavailable"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/expired/analytics"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("expired"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    let summary_error = expect_streamable_error(
+        client.get_video_analytics("rejected").await,
+        "rejected video analytics should fail",
+    );
+    let live_error = expect_streamable_error(
+        client.get_video_live_views("rejected").await,
+        "rejected live views should fail",
+    );
+    let session_error = expect_streamable_error(
+        client.get_video_analytics("expired").await,
+        "expired video analytics should fail",
+    );
+
+    assert!(matches!(
+        summary_error,
+        StreamableError::VideoAnalyticsFailed {
+            ref shortcode,
+            status: 500,
+            ref message
+        } if shortcode == "rejected" && message == "Analytics unavailable"
+    ));
+    assert!(matches!(
+        live_error,
+        StreamableError::VideoLiveViewsFailed {
+            ref shortcode,
+            status: 503,
+            ref message
+        } if shortcode == "rejected" && message == "Live count unavailable"
+    ));
+    assert!(matches!(
+        session_error,
+        StreamableError::InvalidSession { .. }
+    ));
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_video_live_views_can_be_fetched() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = remote_authenticated_client().await;
+    let video = client
+        .upload_video(media_path("webm.webm"), None)
+        .await
+        .expect("remote video upload should reach transcoding");
+
+    client
+        .get_video_live_views(&video.shortcode)
+        .await
+        .expect("remote live views should be available");
+    drop(client);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn unauthenticated_video_privacy_update_and_explicit_refresh_succeed() {
     let mock_server = MockServer::start().await;
     Mock::given(method("PATCH"))
