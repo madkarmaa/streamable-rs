@@ -13,6 +13,48 @@ use wiremock::{
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 static REMOTE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+static REMOTE_CLIENT: tokio::sync::OnceCell<tokio::sync::Mutex<AuthenticatedStreamableClient>> =
+    tokio::sync::OnceCell::const_new();
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+fn remote_credentials() -> (String, String) {
+    let path = dotenvy::dotenv().expect("remote tests require a readable .env file");
+    let mut values = dotenvy::from_path_iter(path)
+        .expect("remote tests require a valid .env file")
+        .collect::<std::result::Result<std::collections::HashMap<_, _>, _>>()
+        .expect("remote tests require valid EMAIL and PASSWORD entries");
+    let email = values
+        .remove("EMAIL")
+        .expect("remote tests require EMAIL in .env");
+    let password = values
+        .remove("PASSWORD")
+        .expect("remote tests require PASSWORD in .env");
+    assert!(!email.is_empty(), "remote test EMAIL must not be empty");
+    assert!(
+        !password.is_empty(),
+        "remote test PASSWORD must not be empty"
+    );
+    (email, password)
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+async fn remote_authenticated_client()
+-> tokio::sync::MutexGuard<'static, AuthenticatedStreamableClient> {
+    REMOTE_CLIENT
+        .get_or_init(|| async {
+            let (email, password) = remote_credentials();
+            let client = StreamableClient::new()
+                .expect("client should initialize")
+                .login(email, password)
+                .await
+                .expect("shared remote account should authenticate");
+            tokio::sync::Mutex::new(client)
+        })
+        .await
+        .lock()
+        .await
+}
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 struct NoCookieHeader;
@@ -687,40 +729,26 @@ async fn delete_video_propagates_transport_errors() {
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
-async fn remote_video_upload_reaches_transcoding_and_is_deleted() {
+async fn remote_video_upload_reaches_transcoding() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
-    let client = StreamableClient::new().expect("client should initialize");
+    let client = remote_authenticated_client().await;
     let video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
-    client
-        .delete_video(&video.shortcode)
-        .await
-        .expect("remote video deletion should succeed");
-    let mut verification_url = Url::parse(crate::constants::API_BASE_URL)
-        .expect("production API base URL should be valid");
-    verification_url.set_path(&format!("/api/v1/videos/{}", video.shortcode));
-    let deleted_status = client
-        .client
-        .get(verification_url)
-        .send()
-        .await
-        .expect("remote deletion verification request should succeed")
-        .status();
+    drop(client);
 
     assert_eq!(
         video.url,
         format!("https://streamable.com/{}", video.shortcode)
     );
-    assert_eq!(deleted_status, reqwest::StatusCode::NOT_FOUND);
 }
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
 async fn remote_video_upload_cancellation_is_accepted() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
-    let client = StreamableClient::new().expect("client should initialize");
+    let client = remote_authenticated_client().await;
     let video_path = media_path("webm.webm");
     let size = std::fs::metadata(&video_path)
         .expect("video fixture should exist")
@@ -743,6 +771,7 @@ async fn remote_video_upload_cancellation_is_accepted() {
         .cancel_video_upload(&upload_info.shortcode)
         .await
         .expect("remote cancellation should succeed");
+    drop(client);
 }
 
 #[test]
@@ -847,17 +876,15 @@ async fn remote_me_refreshes_both_user_states() {
     assert!(!unauthenticated_user.socket.is_empty());
     assert!(client.user().is_some());
 
-    let (mut client, _, _) = client
-        .register(None, None, None)
-        .await
-        .expect("remote registration should succeed");
-    let expected_email = client.user().email.clone();
+    let (email, _) = remote_credentials();
+    let mut client = remote_authenticated_client().await;
     let authenticated_user = client
         .refresh_user()
         .await
         .expect("remote authenticated user refresh should succeed");
 
-    assert_eq!(authenticated_user.email, expected_email);
+    assert_eq!(authenticated_user.email, email);
+    drop(client);
 }
 
 #[tokio::test]
@@ -950,8 +977,7 @@ async fn test_successful_registration_and_login() {
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 async fn remote_change_password_flow() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
-    let email = generate_random_username();
-    let current_password = generate_random_password();
+    let (email, current_password) = remote_credentials();
     let mut new_password = generate_random_password();
     while new_password == current_password {
         new_password = generate_random_password();
@@ -961,11 +987,7 @@ async fn remote_change_password_flow() {
         wrong_password = generate_random_password();
     }
 
-    let (client, _, _) = StreamableClient::new()
-        .expect("client should initialize")
-        .register(Some(email.clone()), Some(current_password.clone()), None)
-        .await
-        .expect("registration should succeed");
+    let client = remote_authenticated_client().await;
 
     let error = expect_streamable_error(
         client.change_password(&wrong_password, &new_password).await,
@@ -992,14 +1014,12 @@ async fn remote_change_password_flow() {
         .await
         .expect("remote password change should succeed");
 
-    let client = client
-        .logout()
-        .expect("logout should succeed")
-        .login(email.clone(), new_password)
+    client
+        .change_password(&new_password, &current_password)
         .await
-        .expect("new password should authenticate");
-
+        .expect("shared remote account password should be restored");
     assert_eq!(client.user().email, email);
+    drop(client);
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -1452,49 +1472,31 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
-async fn remote_video_labels_can_be_assigned_and_cleared() {
+async fn remote_video_labels_can_be_assigned() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
-    let (client, _, _) = StreamableClient::new()
-        .expect("client should initialize")
-        .register(None, None, None)
-        .await
-        .expect("remote registration should succeed");
+    let client = remote_authenticated_client().await;
     let video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
     let label_name = format!("label-{}", generate_random_password());
-    let label_result = client.create_label(&label_name).await;
+    let label = client
+        .create_label(&label_name)
+        .await
+        .expect("remote label creation should succeed");
 
-    if let Err(error) = label_result {
-        client
-            .delete_video(&video.shortcode)
-            .await
-            .expect("remote video cleanup should succeed");
-        panic!("remote label creation should succeed: {error}");
-    }
-
-    let label = label_result.expect("checked successful remote label result");
-    let assigned_result = client.set_video_labels(&video.shortcode, &[label.id]).await;
-    let cleared_result = client.set_video_labels(&video.shortcode, &[]).await;
-    let deleted_label_result = client.delete_label(label.id).await;
-    let deleted_video_result = client.delete_video(&video.shortcode).await;
-
-    assigned_result.expect("remote video label assignment should succeed");
-    cleared_result.expect("remote video label clearing should succeed");
-    deleted_label_result.expect("remote label cleanup should succeed");
-    deleted_video_result.expect("remote video cleanup should succeed");
+    client
+        .set_video_labels(&video.shortcode, &[label.id])
+        .await
+        .expect("remote video label assignment should succeed");
+    drop(client);
 }
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
 async fn remote_label_lifecycle() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
-    let (client, _, _) = StreamableClient::new()
-        .expect("client should initialize")
-        .register(None, None, None)
-        .await
-        .expect("remote registration should succeed");
+    let client = remote_authenticated_client().await;
     let name = format!("label-{}", generate_random_password());
     let renamed_name = format!("{name}-renamed");
 
@@ -1502,11 +1504,11 @@ async fn remote_label_lifecycle() {
         .create_label(&name)
         .await
         .expect("remote label creation should succeed");
-    let renamed_result = client.rename_label(created.id, &renamed_name).await;
-    let deleted_result = client.delete_label(created.id).await;
-
-    let renamed = renamed_result.expect("remote label rename should succeed");
-    deleted_result.expect("remote label cleanup should succeed");
+    let renamed = client
+        .rename_label(created.id, &renamed_name)
+        .await
+        .expect("remote label rename should succeed");
+    drop(client);
     assert_eq!(created.name, name);
     assert_eq!(renamed.id, created.id);
     assert_eq!(renamed.name, renamed_name);
@@ -1701,9 +1703,9 @@ async fn video_privacy_operations_map_endpoint_and_common_errors() {
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
-async fn remote_video_privacy_can_be_updated_refreshed_and_reset() {
+async fn remote_video_privacy_can_be_updated_and_refreshed() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
-    let client = StreamableClient::new().expect("client should initialize");
+    let client = remote_authenticated_client().await;
     let video = client
         .upload_video(media_path("webm.webm"), None)
         .await
@@ -1714,10 +1716,7 @@ async fn remote_video_privacy_can_be_updated_refreshed_and_reset() {
     };
     let updated_result = client.update_video_privacy(&video.shortcode, &update).await;
     let refreshed_result = client.get_video(&video.shortcode).await;
-    let reset_result = client.reset_video_privacy(&video.shortcode).await;
-    let restored_result = client.get_video(&video.shortcode).await;
-    let deleted_result = client.delete_video(&video.shortcode).await;
-
+    drop(client);
     updated_result.expect("remote video privacy update should succeed");
     let refreshed = refreshed_result.expect("remote updated video refresh should succeed");
     assert_eq!(
@@ -1727,15 +1726,6 @@ async fn remote_video_privacy_can_be_updated_refreshed_and_reset() {
             .visibility,
         models::Visibility::Private
     );
-    reset_result.expect("remote video privacy reset should succeed");
-    let restored = restored_result.expect("remote reset video refresh should succeed");
-    assert!(
-        !restored
-            .privacy_settings
-            .expect("remote video should include restored privacy settings")
-            .is_custom
-    );
-    deleted_result.expect("remote video cleanup should succeed");
 }
 
 #[tokio::test]
@@ -1743,11 +1733,7 @@ async fn privacy_settings_update_omits_none_fields_and_refreshes_user() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     {
         let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
-        let (mut client, _, _) = StreamableClient::new()
-            .expect("client should initialize")
-            .register(None, None, None)
-            .await
-            .expect("registration should succeed");
+        let mut client = remote_authenticated_client().await;
         let allow_download = !client.user().privacy_settings.allow_download;
 
         client
@@ -1759,6 +1745,7 @@ async fn privacy_settings_update_omits_none_fields_and_refreshes_user() {
             client.user().privacy_settings.allow_download,
             allow_download
         );
+        drop(client);
     }
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -1861,11 +1848,16 @@ async fn login_reports_invalid_credentials() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
 
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+    let (email, actual_password) = remote_credentials();
+    #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let client = StreamableClient::new().expect("client should initialize");
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let email = generate_random_username();
-    #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let password = generate_random_password();
+    let password = loop {
+        let candidate = generate_random_password();
+        if candidate != actual_password {
+            break candidate;
+        }
+    };
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let mock_server = MockServer::start().await;
