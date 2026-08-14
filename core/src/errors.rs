@@ -56,6 +56,30 @@ pub enum StreamableError {
         status: u16,
     },
 
+    /// Streamable rejected a per-video privacy update.
+    #[error("updating privacy for video '{shortcode}' failed with HTTP status {status}: {message}")]
+    VideoPrivacyUpdateFailed {
+        /// Video whose privacy settings were not updated.
+        shortcode: String,
+        /// HTTP status returned by Streamable.
+        status: u16,
+        /// Failure message returned by Streamable.
+        message: String,
+    },
+
+    /// Streamable rejected resetting a video's privacy settings.
+    #[error(
+        "resetting privacy for video '{shortcode}' failed with HTTP status {status}: {message}"
+    )]
+    VideoPrivacyResetFailed {
+        /// Video whose privacy settings were not reset.
+        shortcode: String,
+        /// HTTP status returned by Streamable.
+        status: u16,
+        /// Failure message returned by Streamable.
+        message: String,
+    },
+
     /// Streamable rejected the request because the endpoint rate limit was exceeded.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded {

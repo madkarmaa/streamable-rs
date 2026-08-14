@@ -29,6 +29,7 @@ pub(crate) trait ApiRequest: Serialize {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct ErrorResponse {
+    #[serde(default)]
     pub error: String,
     pub message: String,
 }
@@ -494,11 +495,13 @@ pub struct AuthenticatedUser {
 }
 
 /// Default visibility assigned to account videos.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Visibility {
     /// Videos are publicly visible.
     Public,
+    /// Videos are hidden from Streamable account pages but remain embeddable.
+    HiddenOnStreamable,
     /// Videos are private.
     Private,
 }
@@ -548,6 +551,237 @@ impl ApiRequest for PrivacySettingsRequest {
 
     fn method(&self) -> reqwest::Method {
         reqwest::Method::PATCH
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        response.json()
+    }
+}
+
+/// Per-video domain restriction mode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DomainRestrictions {
+    /// Domain restrictions are disabled.
+    Off,
+    /// Playback is restricted to allowed domains.
+    Allowlist,
+}
+
+/// Password change included in a per-video privacy update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum VideoPasswordUpdate {
+    /// Sets or replaces the video's password.
+    Set(String),
+    /// Removes the video's password.
+    Remove,
+}
+
+/// Partial per-video privacy update.
+///
+/// Fields set to [`None`] are omitted from the request. [`VideoPasswordUpdate::Remove`] serializes
+/// the `password` field as JSON `null`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct VideoPrivacySettingsUpdate {
+    /// New video visibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<Visibility>,
+    /// Whether viewers may download the video.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_download: Option<bool>,
+    /// Whether viewers may share the video.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_sharing: Option<bool>,
+    /// New domain restriction mode.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain_restrictions: Option<DomainRestrictions>,
+    /// Allowed-domain string sent without normalization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_domain: Option<String>,
+    /// Password mutation; omit, set, or remove.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<VideoPasswordUpdate>,
+    /// Whether the player hides the view count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hide_view_count: Option<bool>,
+}
+
+/// Privacy state returned with a video.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoPrivacySettings {
+    /// Whether viewers may download the video.
+    pub allow_download: bool,
+    /// Whether viewers may share the video.
+    pub allow_sharing: bool,
+    /// Video visibility.
+    pub visibility: Visibility,
+    /// Domain restriction mode.
+    pub domain_restrictions: DomainRestrictions,
+    /// Allowed-domain string.
+    pub allowed_domain: String,
+    /// Whether the video has a password.
+    pub password_protected: bool,
+    /// Whether the player hides the view count.
+    pub hide_view_count: bool,
+    /// Whether settings override account defaults.
+    pub is_custom: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct UpdateVideoPrivacyRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+    #[serde(flatten)]
+    settings: VideoPrivacySettingsUpdate,
+}
+
+impl UpdateVideoPrivacyRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str, settings: &VideoPrivacySettingsUpdate) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}/settings"),
+            shortcode: shortcode.to_string(),
+            settings: settings.clone(),
+        }
+    }
+}
+
+impl ApiRequest for UpdateVideoPrivacyRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::PATCH
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+            .header(reqwest::header::PRAGMA, "no-cache")
+            .header(reqwest::header::CACHE_CONTROL, "no-cache")
+            .json(self)
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response
+                .api_error()
+                .map(|error| error.message)
+                .filter(|message| !message.is_empty())
+                .unwrap_or_else(|| response.text().into_owned());
+            return Err(StreamableError::VideoPrivacyUpdateFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            });
+        }
+
+        response.into_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ResetVideoPrivacyRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+}
+
+impl ResetVideoPrivacyRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}/settings"),
+            shortcode: shortcode.to_string(),
+        }
+    }
+}
+
+impl ApiRequest for ResetVideoPrivacyRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::DELETE
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .header(reqwest::header::PRAGMA, "no-cache")
+            .header(reqwest::header::CACHE_CONTROL, "no-cache")
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response
+                .api_error()
+                .map(|error| error.message)
+                .filter(|message| !message.is_empty())
+                .unwrap_or_else(|| response.text().into_owned());
+            return Err(StreamableError::VideoPrivacyResetFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            });
+        }
+
+        response.into_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GetVideoRequest {
+    #[serde(skip)]
+    url: String,
+}
+
+impl GetVideoRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}"),
+        }
+    }
+}
+
+impl ApiRequest for GetVideoRequest {
+    type Response = Video;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::GET
+    }
+
+    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        request
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -610,6 +844,9 @@ pub struct Video {
     pub width: Option<u32>,
     /// Pixel height when known.
     pub height: Option<u32>,
+    /// Per-video privacy state when included in the response.
+    #[serde(default)]
+    pub privacy_settings: Option<VideoPrivacySettings>,
 }
 
 /// Video processing options returned while initializing an upload.

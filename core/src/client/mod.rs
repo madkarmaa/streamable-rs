@@ -427,6 +427,50 @@ impl StreamableClient<Authenticated> {
 }
 
 impl<State: Sync> StreamableClient<State> {
+    /// Updates only the supplied privacy fields for a video.
+    ///
+    /// This operation is available for both authenticated and unauthenticated clients. Streamable
+    /// returns no updated representation; call [`Self::get_video`] afterward when authoritative
+    /// privacy state is needed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the update or the request fails.
+    pub async fn update_video_privacy(
+        &self,
+        shortcode: &str,
+        settings: &models::VideoPrivacySettingsUpdate,
+    ) -> Result<()> {
+        self.execute(&models::UpdateVideoPrivacyRequest::new(shortcode, settings))
+            .await
+    }
+
+    /// Removes a video's custom privacy settings and restores defaults.
+    ///
+    /// This operation is available for both authenticated and unauthenticated clients. Streamable
+    /// returns no updated representation; call [`Self::get_video`] afterward to read restored
+    /// privacy state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the reset or the request fails.
+    pub async fn reset_video_privacy(&self, shortcode: &str) -> Result<()> {
+        self.execute(&models::ResetVideoPrivacyRequest::new(shortcode))
+            .await
+    }
+
+    /// Fetches a video and its current metadata.
+    ///
+    /// This operation is available for both authenticated and unauthenticated clients.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request fails or the response does not match the expected video
+    /// model.
+    pub async fn get_video(&self, shortcode: &str) -> Result<models::Video> {
+        self.execute(&models::GetVideoRequest::new(shortcode)).await
+    }
+
     /// Permanently deletes a video by shortcode.
     ///
     /// # Errors

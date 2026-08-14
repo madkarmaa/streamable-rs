@@ -1,7 +1,8 @@
 use super::{
     CancelVideoUploadRequest, ChangePasswordRequest, CreateLabelRequest, CreateUserRequest,
-    InitializeVideoUploadRequest, PrivacySettingsRequest, RenameLabelRequest,
-    SetVideoLabelsRequest, TranscodeVideoRequest, UploadInfo, Visibility,
+    DomainRestrictions, InitializeVideoUploadRequest, PrivacySettingsRequest, RenameLabelRequest,
+    SetVideoLabelsRequest, TranscodeVideoRequest, UploadInfo, VideoPasswordUpdate,
+    VideoPrivacySettingsUpdate, Visibility,
 };
 
 #[test]
@@ -30,6 +31,11 @@ fn visibility_serializes_as_lowercase_strings() {
         r#""public""#
     );
     assert_eq!(
+        serde_json::to_string(&Visibility::HiddenOnStreamable)
+            .expect("hidden visibility should serialize"),
+        r#""hidden_on_streamable""#
+    );
+    assert_eq!(
         serde_json::to_string(&Visibility::Private).expect("private visibility should serialize"),
         r#""private""#
     );
@@ -42,6 +48,45 @@ fn privacy_settings_request_omits_none_fields() {
     assert_eq!(
         serde_json::to_value(request).expect("privacy settings request should serialize"),
         serde_json::json!({ "allow_download": false })
+    );
+}
+
+#[test]
+fn video_privacy_update_serializes_only_supplied_fields() {
+    let update = VideoPrivacySettingsUpdate {
+        visibility: Some(Visibility::HiddenOnStreamable),
+        allow_download: Some(true),
+        allow_sharing: Some(false),
+        domain_restrictions: Some(DomainRestrictions::Allowlist),
+        allowed_domain: Some("site1.com,site2.com".to_string()),
+        password: Some(VideoPasswordUpdate::Set("secret".to_string())),
+        hide_view_count: Some(true),
+    };
+
+    assert_eq!(
+        serde_json::to_value(update).expect("video privacy update should serialize"),
+        serde_json::json!({
+            "visibility": "hidden_on_streamable",
+            "allow_download": true,
+            "allow_sharing": false,
+            "domain_restrictions": "allowlist",
+            "allowed_domain": "site1.com,site2.com",
+            "password": "secret",
+            "hide_view_count": true
+        })
+    );
+}
+
+#[test]
+fn video_privacy_password_removal_serializes_as_null() {
+    let update = VideoPrivacySettingsUpdate {
+        password: Some(VideoPasswordUpdate::Remove),
+        ..VideoPrivacySettingsUpdate::default()
+    };
+
+    assert_eq!(
+        serde_json::to_value(update).expect("password removal should serialize"),
+        serde_json::json!({ "password": null })
     );
 }
 

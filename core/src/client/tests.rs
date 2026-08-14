@@ -203,6 +203,31 @@ fn mock_upload_info(video_size: u64) -> serde_json::Value {
     })
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn mock_video(shortcode: &str, is_custom: bool) -> serde_json::Value {
+    json!({
+        "shortcode": shortcode,
+        "status": 2,
+        "percent": 100,
+        "date_added": 1,
+        "url": format!("https://streamable.com/{shortcode}"),
+        "original_name": "video.webm",
+        "duration": 1.0,
+        "width": 640,
+        "height": 360,
+        "privacy_settings": {
+            "visibility": "hidden_on_streamable",
+            "allow_download": false,
+            "allow_sharing": true,
+            "domain_restrictions": "off",
+            "allowed_domain": "",
+            "password_protected": false,
+            "hide_view_count": false,
+            "is_custom": is_custom
+        }
+    })
+}
+
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
     match result {
         Ok(_) => panic!("{context}"),
@@ -1485,6 +1510,232 @@ async fn remote_label_lifecycle() {
     assert_eq!(created.name, name);
     assert_eq!(renamed.id, created.id);
     assert_eq!(renamed.name, renamed_name);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn unauthenticated_video_privacy_update_and_explicit_refresh_succeed() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/videos/abc123/settings"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_json(json!({
+            "visibility": "hidden_on_streamable"
+        })))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", true)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+    let update = models::VideoPrivacySettingsUpdate {
+        visibility: Some(models::Visibility::HiddenOnStreamable),
+        ..models::VideoPrivacySettingsUpdate::default()
+    };
+
+    client
+        .update_video_privacy("abc123", &update)
+        .await
+        .expect("video privacy update should succeed");
+    let video = client
+        .get_video("abc123")
+        .await
+        .expect("video refresh should succeed");
+    let settings = video
+        .privacy_settings
+        .expect("refreshed video should include privacy settings");
+
+    assert_eq!(settings.visibility, models::Visibility::HiddenOnStreamable);
+    assert!(settings.is_custom);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn update_video_privacy_serializes_password_removal_as_null() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/videos/abc123/settings"))
+        .and(body_json(json!({ "password": null })))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let update = models::VideoPrivacySettingsUpdate {
+        password: Some(models::VideoPasswordUpdate::Remove),
+        ..models::VideoPrivacySettingsUpdate::default()
+    };
+
+    client
+        .update_video_privacy("abc123", &update)
+        .await
+        .expect("password removal should succeed");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn reset_video_privacy_sends_bodyless_delete() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/abc123/settings"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    client
+        .reset_video_privacy("abc123")
+        .await
+        .expect("video privacy reset should succeed");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    let reset_request = requests
+        .iter()
+        .find(|request| request.method.as_str() == "DELETE")
+        .expect("privacy reset request should be recorded");
+    assert!(reset_request.body.is_empty());
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_privacy_operations_map_endpoint_and_common_errors() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/videos/rejected/settings"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "message": "Invalid visibility"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/rejected/settings"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({
+            "error": "InternalServerError",
+            "message": "Reset failed"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/videos/expired/settings"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("expired"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let update = models::VideoPrivacySettingsUpdate {
+        visibility: Some(models::Visibility::Private),
+        ..models::VideoPrivacySettingsUpdate::default()
+    };
+
+    let update_error = expect_streamable_error(
+        client.update_video_privacy("rejected", &update).await,
+        "rejected privacy update should fail",
+    );
+    let reset_error = expect_streamable_error(
+        client.reset_video_privacy("rejected").await,
+        "rejected privacy reset should fail",
+    );
+    let session_error = expect_streamable_error(
+        client.update_video_privacy("expired", &update).await,
+        "expired privacy update should fail",
+    );
+
+    assert!(matches!(
+        update_error,
+        StreamableError::VideoPrivacyUpdateFailed {
+            ref shortcode,
+            status: 400,
+            ref message
+        } if shortcode == "rejected" && message == "Invalid visibility"
+    ));
+    assert!(matches!(
+        reset_error,
+        StreamableError::VideoPrivacyResetFailed {
+            ref shortcode,
+            status: 500,
+            ref message
+        } if shortcode == "rejected" && message == "Reset failed"
+    ));
+    assert!(matches!(
+        session_error,
+        StreamableError::InvalidSession { .. }
+    ));
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_video_privacy_can_be_updated_refreshed_and_reset() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = StreamableClient::new().expect("client should initialize");
+    let video = client
+        .upload_video(media_path("webm.webm"), None)
+        .await
+        .expect("remote video upload should reach transcoding");
+    let update = models::VideoPrivacySettingsUpdate {
+        visibility: Some(models::Visibility::Private),
+        ..models::VideoPrivacySettingsUpdate::default()
+    };
+    let updated_result = client.update_video_privacy(&video.shortcode, &update).await;
+    let refreshed_result = client.get_video(&video.shortcode).await;
+    let reset_result = client.reset_video_privacy(&video.shortcode).await;
+    let restored_result = client.get_video(&video.shortcode).await;
+    let deleted_result = client.delete_video(&video.shortcode).await;
+
+    updated_result.expect("remote video privacy update should succeed");
+    let refreshed = refreshed_result.expect("remote updated video refresh should succeed");
+    assert_eq!(
+        refreshed
+            .privacy_settings
+            .expect("remote video should include updated privacy settings")
+            .visibility,
+        models::Visibility::Private
+    );
+    reset_result.expect("remote video privacy reset should succeed");
+    let restored = restored_result.expect("remote reset video refresh should succeed");
+    assert!(
+        !restored
+            .privacy_settings
+            .expect("remote video should include restored privacy settings")
+            .is_custom
+    );
+    deleted_result.expect("remote video cleanup should succeed");
 }
 
 #[tokio::test]
