@@ -19,29 +19,45 @@ use url::Url;
 #[cfg(test)]
 mod tests;
 
-/// Marker for a client without an authenticated session.
+/// Marks a signed-out client.
+///
+/// ```
+/// use streamable::{StreamableClient, Unauthenticated};
+///
+/// let client: StreamableClient<Unauthenticated> = StreamableClient::new()?;
+/// # Ok::<(), streamable::StreamableError>(())
+/// ```
 #[derive(Debug)]
 pub struct Unauthenticated {
     user: Option<models::UnauthenticatedUser>,
 }
 
-/// Marker for a client with an authenticated session.
+/// Marks a signed-in client.
+///
+/// ```no_run
+/// use streamable::{Authenticated, StreamableClient};
+///
+/// fn print_account(client: &StreamableClient<Authenticated>) {
+///     println!("{}", client.user().email);
+/// }
+/// ```
 #[derive(Debug)]
 pub struct Authenticated {
     user: models::AuthenticatedUser,
 }
 
-/// Client returned by [`StreamableClient::new`] and
-/// [`AuthenticatedStreamableClient::logout`].
+/// A signed-out client.
 ///
-/// Its [`StreamableClient::user`] method exposes only the basic user data available without an
-/// authenticated session.
+/// ```
+/// use streamable::{StreamableClient, UnauthenticatedStreamableClient};
+///
+/// let client: UnauthenticatedStreamableClient = StreamableClient::new()?;
+/// assert!(!client.is_authenticated());
+/// # Ok::<(), streamable::StreamableError>(())
+/// ```
 pub type UnauthenticatedStreamableClient = StreamableClient<Unauthenticated>;
 
-/// Client returned by [`UnauthenticatedStreamableClient::register`] and
-/// [`UnauthenticatedStreamableClient::login`].
-///
-/// It must call [`AuthenticatedStreamableClient::logout`] before authenticating again:
+/// A client returned by login or registration.
 ///
 /// ```compile_fail
 /// use streamable::AuthenticatedStreamableClient;
@@ -56,11 +72,16 @@ pub type UnauthenticatedStreamableClient = StreamableClient<Unauthenticated>;
 /// ```
 pub type AuthenticatedStreamableClient = StreamableClient<Authenticated>;
 
-/// Cooperative cancellation token for an in-flight video upload.
+/// A shared upload stop signal.
 ///
-/// Clone this token before starting [`StreamableClient::upload_video_with_cancellation`], then call
-/// [`UploadCancellationToken::cancel`] from another task. Cancellation aborts the current request
-/// and, after Streamable assigns a shortcode, reports cancellation to Streamable.
+/// ```
+/// use streamable::UploadCancellationToken;
+///
+/// let token = UploadCancellationToken::new();
+/// let other_task = token.clone();
+/// other_task.cancel();
+/// assert!(token.is_cancelled());
+/// ```
 #[derive(Clone, Debug)]
 pub struct UploadCancellationToken {
     inner: Arc<UploadCancellationState>,
@@ -73,7 +94,7 @@ struct UploadCancellationState {
 }
 
 impl UploadCancellationToken {
-    /// Creates a token in the active (not cancelled) state.
+    /// Creates a token that has not been cancelled.
     ///
     /// ```
     /// use streamable::UploadCancellationToken;
@@ -91,7 +112,16 @@ impl UploadCancellationToken {
         }
     }
 
-    /// Marks this token and all its clones as cancelled and wakes upload tasks.
+    /// Cancels this token and every clone of it.
+    ///
+    /// ```
+    /// use streamable::UploadCancellationToken;
+    ///
+    /// let token = UploadCancellationToken::new();
+    /// let clone = token.clone();
+    /// clone.cancel();
+    /// assert!(token.is_cancelled());
+    /// ```
     pub fn cancel(&self) {
         if !self.inner.cancelled.swap(true, Ordering::AcqRel) {
             self.inner.notify.notify_waiters();
@@ -99,7 +129,16 @@ impl UploadCancellationToken {
     }
 
     #[must_use]
-    /// Returns whether cancellation has been requested.
+    /// Returns `true` after this token or one of its clones is cancelled.
+    ///
+    /// ```
+    /// use streamable::UploadCancellationToken;
+    ///
+    /// let token = UploadCancellationToken::new();
+    /// assert!(!token.is_cancelled());
+    /// token.cancel();
+    /// assert!(token.is_cancelled());
+    /// ```
     pub fn is_cancelled(&self) -> bool {
         self.inner.cancelled.load(Ordering::Acquire)
     }
@@ -150,7 +189,15 @@ impl EndpointRouting {
     }
 }
 
-/// Streamable API client.
+/// A Streamable API client.
+///
+/// ```
+/// use streamable::StreamableClient;
+///
+/// let client = StreamableClient::new()?;
+/// assert!(!client.is_authenticated());
+/// # Ok::<(), streamable::StreamableError>(())
+/// ```
 pub struct StreamableClient<State = Unauthenticated> {
     client: reqwest::Client,
     cookie_jar: Arc<Jar>,
@@ -159,7 +206,13 @@ pub struct StreamableClient<State = Unauthenticated> {
 }
 
 impl StreamableClient<Unauthenticated> {
-    /// Creates a client using the production authentication and API base URLs.
+    /// Creates a signed-out client.
+    ///
+    /// ```
+    /// let client = streamable::StreamableClient::new()?;
+    /// assert!(!client.is_authenticated());
+    /// # Ok::<(), streamable::StreamableError>(())
+    /// ```
     ///
     /// # Errors
     ///
@@ -187,15 +240,26 @@ impl StreamableClient<Unauthenticated> {
         })
     }
 
-    /// Basic user data previously fetched without an authenticated session.
+    /// Returns the last fetched signed-out user data.
     ///
-    /// **NOTE**: the returned [`Option`] is `None` until [`UnauthenticatedStreamableClient::refresh_user`] is called.
+    /// ```
+    /// let client = streamable::StreamableClient::new()?;
+    /// assert!(client.user().is_none());
+    /// # Ok::<(), streamable::StreamableError>(())
+    /// ```
     #[must_use]
     pub const fn user(&self) -> Option<&models::UnauthenticatedUser> {
         self.state.user.as_ref()
     }
 
-    /// Fetches current unauthenticated user data and stores it in this client.
+    /// Fetches and stores signed-out user data.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let mut client = streamable::StreamableClient::new()?;
+    /// println!("{}", client.refresh_user().await?.total_uploads);
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -205,21 +269,26 @@ impl StreamableClient<Unauthenticated> {
         Ok(&*self.state.user.insert(user))
     }
 
-    /// Checks whether the client has an authenticated session.
+    /// Returns `false` for a signed-out client.
+    ///
+    /// ```
+    /// let client = streamable::StreamableClient::new()?;
+    /// assert!(!client.is_authenticated());
+    /// # Ok::<(), streamable::StreamableError>(())
+    /// ```
     #[must_use]
     pub const fn is_authenticated(&self) -> bool {
         false
     }
 
-    /// Registers a new user and returns the authenticated client, email, and password.
+    /// Registers with email and password. Missing values are generated.
     ///
-    /// If `email`, `password`, or `username` are not provided, they will be randomly generated.
-    ///
-    /// Only email+password registration **IS** supported.
-    ///
-    /// Google OAuth registration is **NOT** supported.
-    ///
-    /// Facebook registration is **NOT** supported.
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let (client, email, password) = client.register(None, None, None).await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -240,13 +309,15 @@ impl StreamableClient<Unauthenticated> {
         Ok((self.into_authenticated(user), email, password))
     }
 
-    /// Logs in an existing user.
+    /// Signs in with email and password.
     ///
-    /// Only email+password login **IS** supported.
-    ///
-    /// Google OAuth login is **NOT** supported.
-    ///
-    /// Facebook login is **NOT** supported.
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?
+    ///     .login("me@example.com".into(), "password".into()).await?;
+    /// assert!(client.is_authenticated());
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -273,19 +344,37 @@ impl StreamableClient<Unauthenticated> {
 }
 
 impl StreamableClient<Authenticated> {
-    /// The currently authenticated user's data.
+    /// Returns the signed-in user.
+    ///
+    /// ```no_run
+    /// fn email(client: &streamable::AuthenticatedStreamableClient) {
+    ///     println!("{}", client.user().email);
+    /// }
+    /// ```
     #[must_use]
     pub const fn user(&self) -> &models::AuthenticatedUser {
         &self.state.user
     }
 
-    /// Checks whether the client has an authenticated session.
+    /// Returns `true` for a signed-in client.
+    ///
+    /// ```no_run
+    /// fn check(client: &streamable::AuthenticatedStreamableClient) {
+    ///     assert!(client.is_authenticated());
+    /// }
+    /// ```
     #[must_use]
     pub const fn is_authenticated(&self) -> bool {
         true
     }
 
-    /// Fetches current authenticated user data and stores it in this client.
+    /// Fetches and stores the signed-in user.
+    ///
+    /// ```no_run
+    /// # async fn run(mut client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    /// println!("{}", client.refresh_user().await?.email);
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -296,10 +385,14 @@ impl StreamableClient<Authenticated> {
             .await
     }
 
-    /// Changes the authenticated user's privacy settings.
+    /// Changes the account's default privacy settings.
     ///
-    /// Settings passed as `None` are omitted from the PATCH body, leaving those server-side
-    /// values unchanged. The response replaces the user data stored by this client.
+    /// ```no_run
+    /// # async fn run(mut client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    /// use streamable::models::Visibility;
+    /// client.change_privacy_settings(Some(false), None, Some(Visibility::Private)).await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -317,7 +410,13 @@ impl StreamableClient<Authenticated> {
         Ok(&user.privacy_settings)
     }
 
-    /// Changes the authenticated account's password.
+    /// Changes the account password.
+    ///
+    /// ```no_run
+    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    /// client.change_password("old password", "new password").await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -330,9 +429,13 @@ impl StreamableClient<Authenticated> {
         self.execute(&request).await
     }
 
-    /// Creates a label for the authenticated user.
+    /// Creates an account label. Spaces around the name are removed.
     ///
-    /// Leading and trailing whitespace is removed from `name` before sending it.
+    /// ```no_run
+    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    /// let label = client.create_label("reviewed").await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -342,7 +445,13 @@ impl StreamableClient<Authenticated> {
         self.execute(&models::CreateLabelRequest::new(name)).await
     }
 
-    /// Deletes a label belonging to the authenticated user.
+    /// Deletes an account label.
+    ///
+    /// ```no_run
+    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    /// client.delete_label(42).await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -352,9 +461,13 @@ impl StreamableClient<Authenticated> {
         self.execute(&models::DeleteLabelRequest::new(id)).await
     }
 
-    /// Renames a label belonging to the authenticated user.
+    /// Renames an account label. Spaces around the name are removed.
     ///
-    /// Leading and trailing whitespace is removed from `new_name` before sending it.
+    /// ```no_run
+    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    /// let label = client.rename_label(42, "done").await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -365,10 +478,13 @@ impl StreamableClient<Authenticated> {
             .await
     }
 
-    /// Replaces every label assigned to a video.
+    /// Replaces a video's labels in the given order. An empty slice removes all labels.
     ///
-    /// Label IDs retain their input order. Passing an empty slice removes every label from the
-    /// video.
+    /// ```no_run
+    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    /// client.set_video_labels("abc123", &[3, 1]).await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -379,7 +495,15 @@ impl StreamableClient<Authenticated> {
             .await
     }
 
-    /// Logs out the currently authenticated user.
+    /// Returns a new signed-out client.
+    ///
+    /// ```no_run
+    /// fn logout(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
+    ///     let client = client.logout()?;
+    ///     assert!(!client.is_authenticated());
+    ///     Ok(())
+    /// }
+    /// ```
     ///
     /// # Errors
     ///
@@ -427,11 +551,17 @@ impl StreamableClient<Authenticated> {
 }
 
 impl<State: Sync> StreamableClient<State> {
-    /// Updates only the supplied privacy fields for a video.
+    /// Changes the given video privacy fields. Works without signing in.
     ///
-    /// This operation is available for both authenticated and unauthenticated clients. Streamable
-    /// returns no updated representation; call [`Self::get_video`] afterward when authoritative
-    /// privacy state is needed.
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// use streamable::{models::VideoPrivacySettingsUpdate, StreamableClient};
+    /// let client = StreamableClient::new()?;
+    /// client.update_video_privacy("abc123", &VideoPrivacySettingsUpdate {
+    ///     allow_download: Some(false), ..Default::default()
+    /// }).await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -445,11 +575,14 @@ impl<State: Sync> StreamableClient<State> {
             .await
     }
 
-    /// Removes a video's custom privacy settings and restores defaults.
+    /// Restores a video's default privacy settings. Works without signing in.
     ///
-    /// This operation is available for both authenticated and unauthenticated clients. Streamable
-    /// returns no updated representation; call [`Self::get_video`] afterward to read restored
-    /// privacy state.
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// client.reset_video_privacy("abc123").await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -459,9 +592,14 @@ impl<State: Sync> StreamableClient<State> {
             .await
     }
 
-    /// Fetches a video and its current metadata.
+    /// Gets a video. Works without signing in.
     ///
-    /// This operation is available for both authenticated and unauthenticated clients.
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// println!("{}", client.get_video("abc123").await?.url);
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -471,7 +609,14 @@ impl<State: Sync> StreamableClient<State> {
         self.execute(&models::GetVideoRequest::new(shortcode)).await
     }
 
-    /// Permanently deletes a video by shortcode.
+    /// Deletes a video.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// client.delete_video("abc123").await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -482,10 +627,14 @@ impl<State: Sync> StreamableClient<State> {
             .await
     }
 
-    /// Uploads a local video and starts Streamable transcoding.
+    /// Uploads a video. The file name is the default title.
     ///
-    /// `title` is sent as the video's title when provided. Otherwise, the title defaults to the
-    /// file stem.
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let video = client.upload_video("video.mp4", Some("Demo".into())).await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -500,12 +649,17 @@ impl<State: Sync> StreamableClient<State> {
             .await
     }
 
-    /// Uploads a local video with cooperative cancellation.
+    /// Uploads a video that an [`UploadCancellationToken`] can stop.
     ///
-    /// `title` is sent as the video's title when provided. Otherwise, the title defaults to the
-    /// file stem.
-    ///
-    /// Calling [`UploadCancellationToken::cancel`] aborts the active upload request.
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// use streamable::{StreamableClient, UploadCancellationToken};
+    /// let client = StreamableClient::new()?;
+    /// let token = UploadCancellationToken::new();
+    /// token.cancel();
+    /// let result = client.upload_video_with_cancellation("video.mp4", None, token).await;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -554,7 +708,14 @@ impl<State: Sync> StreamableClient<State> {
             .await
     }
 
-    /// Cancels an upload already known by its Streamable shortcode.
+    /// Cancels an upload by its shortcode.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// client.cancel_video_upload("abc123").await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///

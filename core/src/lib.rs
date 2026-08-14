@@ -3,13 +3,38 @@
 
 mod client;
 mod constants;
-/// Error and result types returned by this crate.
+/// Errors returned by the client.
+///
+/// ```
+/// use streamable::errors::{Result, StreamableError};
+/// let result: Result<()> = Err(StreamableError::UploadCancelled { shortcode: None });
+/// assert!(result.is_err());
+/// ```
 pub mod errors;
-/// Public response data models.
+/// Data sent to and returned by Streamable.
+///
+/// ```
+/// use streamable::models::{VideoPrivacySettingsUpdate, Visibility};
+///
+/// let update = VideoPrivacySettingsUpdate {
+///     visibility: Some(Visibility::Private),
+///     ..Default::default()
+/// };
+/// ```
 pub mod models;
-/// HTTP response wrapper used by custom request decoders.
+/// Raw API response access for custom decoders.
+///
+/// ```no_run
+/// use streamable::ApiResponse;
+/// fn status(response: &ApiResponse) { println!("{}", response.status()); }
+/// ```
 pub mod response;
-/// Standalone helpers for credentials and video-file detection.
+/// Small helpers used by the client.
+///
+/// ```
+/// let password = streamable::utils::generate_random_password();
+/// assert!((8..=20).contains(&password.len()));
+/// ```
 pub mod utils;
 
 pub use client::{

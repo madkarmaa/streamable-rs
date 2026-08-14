@@ -1,119 +1,125 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
-/// Errors returned by the Streamable API client.
+/// Errors returned by the client.
+///
+/// ```
+/// use streamable::StreamableError;
+/// let error = StreamableError::UploadCancelled { shortcode: None };
+/// assert_eq!(error.to_string(), "video upload was cancelled");
+/// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum StreamableError {
-    /// Signup failed because the email is already registered.
+    /// The email is already registered.
     #[error("{message}")]
     EmailAlreadyInUse {
-        /// Message returned by Streamable.
+        /// Server message.
         message: String,
     },
 
-    /// Login failed because the email or password is incorrect.
+    /// The email or password is wrong.
     #[error("{message}")]
     InvalidCredentials {
-        /// Authentication failure message.
+        /// Server message.
         message: String,
     },
 
-    /// An authenticated operation failed because the session is missing or expired.
+    /// The login session is missing or expired.
     #[error("{message}")]
     InvalidSession {
-        /// Session failure message.
+        /// Server message.
         message: String,
     },
 
-    /// Password validation failed.
+    /// The password does not meet the rules.
     #[error("{message}")]
     PasswordValidation {
-        /// Password requirement message.
+        /// Password rule message.
         message: String,
     },
 
-    /// Label creation failed because the authenticated user already has a label with this name.
+    /// A label already has this name.
     #[error("Label '{name}' already exists.")]
     LabelAlreadyExists {
-        /// Conflicting label name.
+        /// Existing name.
         name: String,
     },
 
-    /// Label operation failed because the authenticated user does not have this label.
+    /// The label does not exist.
     #[error("Label ID {id} not found.")]
     LabelNotFound {
-        /// Missing label identifier.
+        /// Missing label ID.
         id: u64,
     },
 
-    /// Streamable rejected replacing a video's label assignments.
+    /// Streamable rejected the new video labels.
     #[error("setting labels for video '{shortcode}' failed with HTTP status {status}")]
     VideoLabelAssignmentFailed {
-        /// Video whose labels were not replaced.
+        /// Video shortcode.
         shortcode: String,
-        /// HTTP status returned by Streamable.
+        /// HTTP status.
         status: u16,
     },
 
-    /// Streamable rejected a per-video privacy update.
+    /// Streamable rejected a video privacy change.
     #[error("updating privacy for video '{shortcode}' failed with HTTP status {status}: {message}")]
     VideoPrivacyUpdateFailed {
-        /// Video whose privacy settings were not updated.
+        /// Video shortcode.
         shortcode: String,
-        /// HTTP status returned by Streamable.
+        /// HTTP status.
         status: u16,
-        /// Failure message returned by Streamable.
+        /// Server message.
         message: String,
     },
 
-    /// Streamable rejected resetting a video's privacy settings.
+    /// Streamable rejected a video privacy reset.
     #[error(
         "resetting privacy for video '{shortcode}' failed with HTTP status {status}: {message}"
     )]
     VideoPrivacyResetFailed {
-        /// Video whose privacy settings were not reset.
+        /// Video shortcode.
         shortcode: String,
-        /// HTTP status returned by Streamable.
+        /// HTTP status.
         status: u16,
-        /// Failure message returned by Streamable.
+        /// Server message.
         message: String,
     },
 
-    /// Streamable rejected the request because the endpoint rate limit was exceeded.
+    /// Too many requests reached an endpoint.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded {
-        /// Endpoint whose rate limit was exceeded.
+        /// Limited endpoint.
         endpoint: String,
     },
 
-    /// The requested upload path is not a recognized video file.
+    /// The upload path is not a video file.
     #[error("Path '{}' is not a valid video file", path.display())]
     InvalidVideoFile {
-        /// Rejected local path.
+        /// Rejected path.
         path: PathBuf,
     },
 
-    /// Streamable's temporary S3 configuration could not be signed.
+    /// The S3 upload request could not be signed.
     #[error("the S3 upload request could not be signed: {message}")]
     UploadSigning {
-        /// Signing failure detail.
+        /// Error message.
         message: String,
     },
 
-    /// The caller cancelled a video upload.
+    /// The upload was cancelled.
     #[error("video upload was cancelled")]
     UploadCancelled {
-        /// Assigned shortcode, or `None` when cancellation preceded assignment.
+        /// Video shortcode, if one was assigned.
         shortcode: Option<String>,
     },
 
-    /// Streamable accepted a video deletion request but did not return the exact success body.
+    /// Video deletion returned an unexpected body.
     #[error("video deletion for '{shortcode}' returned unexpected response body: {response:?}")]
     UnexpectedVideoDeletionResponse {
-        /// Shortcode sent in the deletion request.
+        /// Video shortcode.
         shortcode: String,
-        /// Response body returned by Streamable.
+        /// Response body.
         response: String,
     },
 
@@ -125,14 +131,19 @@ pub enum StreamableError {
     #[error(transparent)]
     Request(#[from] reqwest::Error),
 
-    /// The API response body did not match the expected model.
+    /// The response body had an unexpected shape.
     #[error(transparent)]
     ResponseDecode(#[from] serde_json::Error),
 
-    /// A configured or request URL was invalid.
+    /// A URL was invalid.
     #[error(transparent)]
     UrlParse(#[from] url::ParseError),
 }
 
 /// Result type returned by Streamable operations.
+///
+/// ```
+/// fn upload() -> streamable::Result<()> { Ok(()) }
+/// assert!(upload().is_ok());
+/// ```
 pub type Result<T> = std::result::Result<T, StreamableError>;

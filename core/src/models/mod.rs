@@ -306,6 +306,11 @@ impl ApiRequest for CreateLabelRequest {
 }
 
 /// Label owned by a Streamable account.
+///
+/// ```
+/// let label = streamable::models::Label { name: "reviewed".into(), id: 42 };
+/// assert_eq!(label.id, 42);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
     /// Label name.
@@ -450,63 +455,89 @@ impl ApiRequest for SetVideoLabelsRequest {
     }
 }
 
-/// Basic current-user data available without authentication.
+/// User totals available without signing in.
+///
+/// ```
+/// let user = streamable::models::UnauthenticatedUser {
+///     socket: "socket-id".into(), total_plays: 10, total_uploads: 2,
+/// };
+/// assert_eq!(user.total_uploads, 2);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnauthenticatedUser {
-    /// Socket identifier returned by Streamable.
+    /// Streamable socket ID.
     pub socket: String,
-    /// Total play count visible to this session.
+    /// Visible play count.
     pub total_plays: u32,
-    /// Total upload count visible to this session.
+    /// Visible upload count.
     pub total_uploads: u32,
 }
 
-/// Full current-user data returned for an authenticated session.
+/// Data for a signed-in user.
+///
+/// ```no_run
+/// fn show(user: &streamable::models::AuthenticatedUser) {
+///     println!("{} ({})", user.user_name, user.email);
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthenticatedUser {
     #[serde(flatten)]
-    /// Basic fields flattened into the API response.
+    /// Signed-out user totals.
     pub unauthenticated: UnauthenticatedUser,
 
-    /// Server-assigned account identifier.
+    /// Account ID.
     pub id: u64,
     /// Account username.
     pub user_name: String,
     /// Account email address.
     pub email: String,
-    /// Account creation timestamp returned by Streamable.
+    /// Account creation time.
     pub date_added: f64,
-    /// Profile color value.
+    /// Profile color.
     pub color: String,
     /// Profile biography.
     pub bio: String,
-    /// Whether Streamable marks the account as restricted.
+    /// Whether the account is restricted.
     pub restricted: bool,
 
     /// Current plan name.
     pub plan_name: String,
-    /// Maximum video length allowed by the plan.
+    /// Plan video length limit.
     pub plan_max_length: u32,
-    /// Maximum upload size allowed by the plan, as returned by Streamable.
+    /// Plan upload size limit.
     pub plan_max_size: f64,
 
     /// Current account privacy settings.
     pub privacy_settings: PrivacySettings,
 }
 
-/// Default visibility assigned to account videos.
+/// Who can see a video.
+///
+/// ```
+/// use streamable::models::Visibility;
+/// let visibility = Visibility::Private;
+/// assert_eq!(visibility, Visibility::Private);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Visibility {
-    /// Videos are publicly visible.
+    /// Anyone can find the video.
     Public,
-    /// Videos are hidden from Streamable account pages but remain embeddable.
+    /// The video is hidden on Streamable but can be embedded.
     HiddenOnStreamable,
-    /// Videos are private.
+    /// The video is private.
     Private,
 }
 
 /// Account-level privacy settings.
+///
+/// ```
+/// use streamable::models::{PrivacySettings, Visibility};
+/// let settings = PrivacySettings {
+///     allow_download: false, allow_sharing: true, visibility: Visibility::Private,
+/// };
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrivacySettings {
     /// Whether viewers may download videos.
@@ -562,30 +593,46 @@ impl ApiRequest for PrivacySettingsRequest {
     }
 }
 
-/// Per-video domain restriction mode.
+/// Where a video can play.
+///
+/// ```
+/// use streamable::models::DomainRestrictions;
+/// let mode = DomainRestrictions::Allowlist;
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DomainRestrictions {
-    /// Domain restrictions are disabled.
+    /// Allow every domain.
     Off,
-    /// Playback is restricted to allowed domains.
+    /// Allow listed domains only.
     Allowlist,
 }
 
-/// Password change included in a per-video privacy update.
+/// A video password change.
+///
+/// ```
+/// use streamable::models::VideoPasswordUpdate;
+/// let password = VideoPasswordUpdate::Set("secret".into());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum VideoPasswordUpdate {
-    /// Sets or replaces the video's password.
+    /// Set or replace the password.
     Set(String),
-    /// Removes the video's password.
+    /// Remove the password.
     Remove,
 }
 
-/// Partial per-video privacy update.
+/// Privacy fields to change. `None` leaves a field unchanged.
 ///
-/// Fields set to [`None`] are omitted from the request. [`VideoPasswordUpdate::Remove`] serializes
-/// the `password` field as JSON `null`.
+/// ```
+/// use streamable::models::{VideoPrivacySettingsUpdate, Visibility};
+/// let update = VideoPrivacySettingsUpdate {
+///     visibility: Some(Visibility::Private),
+///     allow_download: Some(false),
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct VideoPrivacySettingsUpdate {
     /// New video visibility.
@@ -597,13 +644,13 @@ pub struct VideoPrivacySettingsUpdate {
     /// Whether viewers may share the video.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allow_sharing: Option<bool>,
-    /// New domain restriction mode.
+    /// New domain rule.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_restrictions: Option<DomainRestrictions>,
-    /// Allowed-domain string sent without normalization.
+    /// Allowed domains, sent unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allowed_domain: Option<String>,
-    /// Password mutation; omit, set, or remove.
+    /// Password to leave, set, or remove.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<VideoPasswordUpdate>,
     /// Whether the player hides the view count.
@@ -611,7 +658,13 @@ pub struct VideoPrivacySettingsUpdate {
     pub hide_view_count: Option<bool>,
 }
 
-/// Privacy state returned with a video.
+/// A video's current privacy settings.
+///
+/// ```no_run
+/// fn show(settings: &streamable::models::VideoPrivacySettings) {
+///     println!("private settings: {}", settings.is_custom);
+/// }
+/// ```
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VideoPrivacySettings {
@@ -621,15 +674,15 @@ pub struct VideoPrivacySettings {
     pub allow_sharing: bool,
     /// Video visibility.
     pub visibility: Visibility,
-    /// Domain restriction mode.
+    /// Domain rule.
     pub domain_restrictions: DomainRestrictions,
-    /// Allowed-domain string.
+    /// Allowed domains.
     pub allowed_domain: String,
     /// Whether the video has a password.
     pub password_protected: bool,
     /// Whether the player hides the view count.
     pub hide_view_count: bool,
-    /// Whether settings override account defaults.
+    /// Whether these settings replace account defaults.
     pub is_custom: bool,
 }
 
@@ -821,22 +874,28 @@ pub(crate) struct Fields {
     pub(crate) x_amz_signature: String,
 }
 
-/// Video metadata returned after Streamable accepts or processes an upload.
+/// Video data returned by Streamable.
+///
+/// ```no_run
+/// fn show(video: &streamable::models::Video) {
+///     println!("{}: {}", video.shortcode, video.url);
+/// }
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Video {
-    /// Short identifier used in Streamable URLs.
+    /// Short ID used in URLs.
     pub shortcode: String,
     #[serde(default)]
-    /// Processing status code returned by Streamable.
+    /// Processing status code.
     pub status: u8,
     #[serde(default)]
     /// Processing completion percentage.
     pub percent: u8,
-    /// Video creation timestamp returned by Streamable.
+    /// Video creation time.
     pub date_added: i64,
-    /// Video URL returned by Streamable.
+    /// Video URL.
     pub url: String,
-    /// Original filename when included in the response.
+    /// Original file name, when known.
     pub original_name: Option<String>,
     /// Duration in seconds when known.
     pub duration: Option<f64>,
@@ -844,7 +903,7 @@ pub struct Video {
     pub width: Option<u32>,
     /// Pixel height when known.
     pub height: Option<u32>,
-    /// Per-video privacy state when included in the response.
+    /// Video privacy, when included.
     #[serde(default)]
     pub privacy_settings: Option<VideoPrivacySettings>,
 }

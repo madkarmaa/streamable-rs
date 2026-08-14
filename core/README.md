@@ -2,28 +2,45 @@
 
 Unofficial Rust client for Streamable's undocumented API.
 
-The client uses type states: a new client starts unauthenticated, while
-[`StreamableClient::login`] and [`StreamableClient::register`] return an
-[`AuthenticatedStreamableClient`]. This prevents authenticated-only account operations from being
-called before login.
+Video methods work without signing in:
 
-## Basic usage
+```no_run
+use streamable::{models::VideoPrivacySettingsUpdate, Result, StreamableClient};
+
+# async fn run() -> Result<()> {
+let client = StreamableClient::new()?;
+let video = client.upload_video("video.mp4", None).await?;
+client.update_video_privacy(&video.shortcode, &VideoPrivacySettingsUpdate {
+    allow_download: Some(false),
+    ..Default::default()
+}).await?;
+# Ok(()) }
+```
+
+Sign in for account settings and labels:
 
 ```no_run
 use streamable::{Result, StreamableClient};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let client = StreamableClient::new()?;
-    let client = client
-        .login("user@example.com".into(), "password".into())
-        .await?;
+# async fn run() -> Result<()> {
+let client = StreamableClient::new()?
+    .login("me@example.com".into(), "password".into()).await?;
+let label = client.create_label("reviewed").await?;
+client.set_video_labels("abc123", &[label.id]).await?;
+# Ok(()) }
+```
 
-    println!("signed in as {}", client.user().user_name);
-    let video = client
-        .upload_video("example.mp4", Some("My video".into()))
-        .await?;
-    println!("https://streamable.com/{}", video.shortcode);
-    Ok(())
-}
+Cancel an upload with a shared token:
+
+```no_run
+use streamable::{Result, StreamableClient, UploadCancellationToken};
+
+# async fn run() -> Result<()> {
+let client = StreamableClient::new()?;
+let token = UploadCancellationToken::new();
+let cancel = token.clone();
+let upload = client.upload_video_with_cancellation("video.mp4", None, token);
+cancel.cancel();
+let _ = upload.await;
+# Ok(()) }
 ```

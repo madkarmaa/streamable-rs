@@ -22,6 +22,11 @@ fn random_char(rng: &mut impl Rng, characters: &[u8]) -> u8 {
 }
 
 /// Generates a username as a random email address.
+///
+/// ```
+/// let username = streamable::utils::generate_random_username();
+/// assert!(username.contains('@'));
+/// ```
 #[must_use]
 pub fn generate_random_username() -> String {
     let mut rng = rand::rng();
@@ -43,7 +48,12 @@ pub fn generate_random_username() -> String {
     format!("{local_part}@{domain}")
 }
 
-/// Generates an 8-20 character password with uppercase, lowercase, and numeric characters.
+/// Generates an 8-20 character password with letters and numbers.
+///
+/// ```
+/// let password = streamable::utils::generate_random_password();
+/// assert!((8..=20).contains(&password.len()));
+/// ```
 #[must_use]
 pub fn generate_random_password() -> String {
     let mut rng = rand::rng();
@@ -61,7 +71,7 @@ pub fn generate_random_password() -> String {
     password.into_iter().map(char::from).collect()
 }
 
-/// Returns whether `path` identifies a supported video by inspecting file contents.
+/// Checks file contents for a supported video format.
 ///
 /// Missing files and unrecognized formats return `false`.
 ///
