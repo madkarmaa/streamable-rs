@@ -1,6 +1,7 @@
 # Streamable dashboard More menu: Privacy
 
-Implementation status: **Not implemented in `streamable-rs`; account-level privacy settings alone are implemented.**
+Implementation status: **Implemented in `streamable-rs` through per-video
+update, reset, and explicit refresh operations.**
 
 Captured 2026-08-13 from the authenticated Streamable dashboard, production
 source maps, Chrome DevTools network inspection, and comparison with the
@@ -320,7 +321,7 @@ The disposable authenticated video was used for these observed branches:
 No concrete shortcode, account field, password, cookie, or plan identifier is
 durable project state.
 
-## Python parity and future Rust API
+## Python parity and Rust implementation
 
 The sibling Python implementation exposes account-default privacy changes via
 `/me/settings`; it does not currently implement the per-video
@@ -329,14 +330,15 @@ The sibling Python implementation exposes account-default privacy changes via
 menu behavior therefore needs separate per-video operations rather than an
 extension that silently changes the existing account-level method's endpoint.
 
-A suitable Rust surface is:
+The Rust surface is:
 
 ```text
 update_video_privacy(shortcode, partial_settings)
 reset_video_privacy(shortcode)
+get_video(shortcode)
 ```
 
-The partial model should omit absent fields and support:
+`VideoPrivacySettingsUpdate` omits absent fields and supports:
 
 ```text
 visibility: public | hidden_on_streamable | private
@@ -348,10 +350,22 @@ password: string | null
 hide_view_count: bool
 ```
 
-Do not model `password_protected` or `is_custom` as writable fields; they are
-read-side state from the refetched video. Treat successful 204 responses as
-empty, and keep the follow-up GET explicit if the API should return the updated
-video.
+`VideoPasswordUpdate::Set` serializes a password string and
+`VideoPasswordUpdate::Remove` serializes JSON null. `password_protected` and
+`is_custom` remain read-only fields in `VideoPrivacySettings`, returned through
+the optional `Video::privacy_settings` field. Successful 204 responses are
+empty. `get_video` keeps the authoritative follow-up GET explicit rather than
+hiding a second request inside update or reset.
+
+PATCH and DELETE preserve the observed JSON, pragma, and cache-control headers.
+DELETE remains bodyless. Non-success message payloads map to explicit update or
+reset domain errors, while invalid-session and rate-limit errors retain shared
+mappings. Deterministic local tests cover partial fields, hidden visibility,
+password null, exact paths and headers, bodyless reset, explicit refresh, and
+error branches. A feature-gated remote lifecycle test updates one disposable
+video to private, refreshes it, resets defaults, verifies `is_custom:false`,
+and deletes the video; it is compiled by all-features Clippy but not run by
+default.
 
 ## Deterministic test targets
 
