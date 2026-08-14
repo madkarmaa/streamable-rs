@@ -223,19 +223,19 @@ set_video_labels(shortcode, label_ids)
 ```
 
 `SetVideoLabelsRequest` keeps the fixed `/videos/<shortcode>/labels` suffix
-internal. The public method accepts a label-ID slice, sorts IDs before
-serialization, sends the authenticated session cookie, and accepts a
-successful empty response rather than attempting JSON decoding. Passing an
-empty slice removes all labels. Other non-success statuses map to
+internal. The public method accepts a label-ID slice, preserves caller order,
+sends the authenticated session cookie, and accepts a successful empty
+response rather than attempting JSON decoding. Passing an empty slice removes
+all labels. Other non-success statuses map to
 `VideoLabelAssignmentFailed`, while shared invalid-session and rate-limit
 responses retain their existing domain errors.
 
-Deterministic mock tests cover the exact path, method, cookie, sorted and empty
-replacement bodies, bodyless success, endpoint-specific failure, and shared
-error mappings. A bounded feature-gated remote test uploads one disposable
-video, creates one disposable label, assigns and clears it, then deletes both
-resources. It is compiled by the all-features Clippy gate but is not run by
-default.
+Deterministic mock tests cover the exact path, method, cookie, caller-ordered
+and empty replacement bodies, bodyless success, endpoint-specific failure, and
+shared error mappings. A bounded feature-gated remote test uploads one
+disposable video, creates one disposable label, assigns and clears it, then
+deletes both resources. It is compiled by the all-features Clippy gate but is
+not run by default.
 
 Bulk assignment can be built above the single-video primitive. If it mirrors
 the dashboard, document that it is non-transactional: successful videos remain
@@ -254,7 +254,7 @@ Local mock coverage should verify:
    `/api/v1/videos/<shortcode>/labels`;
 2. the session cookie is present;
 3. the JSON body contains only `labels`;
-4. IDs are sorted before serialization;
+4. IDs retain caller order during serialization;
 5. an empty slice serializes as `{"labels":[]}`;
 6. HTTP 200 with an empty body succeeds;
 7. a non-success response maps to an explicit assignment error without
