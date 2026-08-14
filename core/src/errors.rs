@@ -47,6 +47,15 @@ pub enum StreamableError {
         id: u64,
     },
 
+    /// Streamable rejected replacing a video's label assignments.
+    #[error("setting labels for video '{shortcode}' failed with HTTP status {status}")]
+    VideoLabelAssignmentFailed {
+        /// Video whose labels were not replaced.
+        shortcode: String,
+        /// HTTP status returned by Streamable.
+        status: u16,
+    },
+
     /// Streamable rejected the request because the endpoint rate limit was exceeded.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded {

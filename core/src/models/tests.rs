@@ -1,7 +1,7 @@
 use super::{
     CancelVideoUploadRequest, ChangePasswordRequest, CreateLabelRequest, CreateUserRequest,
     InitializeVideoUploadRequest, PrivacySettingsRequest, RenameLabelRequest,
-    TranscodeVideoRequest, UploadInfo, Visibility,
+    SetVideoLabelsRequest, TranscodeVideoRequest, UploadInfo, Visibility,
 };
 
 #[test]
@@ -76,6 +76,26 @@ fn rename_label_request_trims_and_serializes_only_name() {
     assert_eq!(
         serde_json::to_value(request).expect("rename label request should serialize"),
         serde_json::json!({ "name": "renamed" })
+    );
+}
+
+#[test]
+fn set_video_labels_request_preserves_id_order_and_serializes_only_labels() {
+    let request = SetVideoLabelsRequest::new("abc123", &[42, 7, 18]);
+
+    assert_eq!(
+        serde_json::to_value(request).expect("video labels request should serialize"),
+        serde_json::json!({ "labels": [42, 7, 18] })
+    );
+}
+
+#[test]
+fn set_video_labels_request_preserves_empty_replacement() {
+    let request = SetVideoLabelsRequest::new("abc123", &[]);
+
+    assert_eq!(
+        serde_json::to_value(request).expect("empty video labels request should serialize"),
+        serde_json::json!({ "labels": [] })
     );
 }
 

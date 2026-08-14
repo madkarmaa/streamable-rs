@@ -1310,6 +1310,157 @@ async fn rename_label_reports_missing_id() {
     ));
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn set_video_labels_posts_ordered_absolute_replacement() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "labels": [42, 7, 18] })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    client
+        .set_video_labels("abc123", &[42, 7, 18])
+        .await
+        .expect("video label replacement should succeed");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn set_video_labels_posts_empty_replacement() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "labels": [] })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    client
+        .set_video_labels("abc123", &[])
+        .await
+        .expect("empty video label replacement should succeed");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn set_video_labels_maps_assignment_and_common_errors() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/rejected/labels"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("not json"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/expired/labels"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("not json"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/rate-limited/labels"))
+        .respond_with(ResponseTemplate::new(429).set_body_string("not json"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let rejected = expect_streamable_error(
+        client.set_video_labels("rejected", &[7]).await,
+        "rejected video label replacement should fail",
+    );
+    let expired = expect_streamable_error(
+        client.set_video_labels("expired", &[7]).await,
+        "expired video label replacement should fail",
+    );
+    let rate_limited = expect_streamable_error(
+        client.set_video_labels("rate-limited", &[7]).await,
+        "rate-limited video label replacement should fail",
+    );
+
+    assert!(matches!(
+        rejected,
+        StreamableError::VideoLabelAssignmentFailed {
+            ref shortcode,
+            status: 500
+        } if shortcode == "rejected"
+    ));
+    assert!(matches!(expired, StreamableError::InvalidSession { .. }));
+    assert!(matches!(
+        rate_limited,
+        StreamableError::RateLimitExceeded { .. }
+    ));
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_video_labels_can_be_assigned_and_cleared() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let (client, _, _) = StreamableClient::new()
+        .expect("client should initialize")
+        .register(None, None, None)
+        .await
+        .expect("remote registration should succeed");
+    let video = client
+        .upload_video(media_path("webm.webm"), None)
+        .await
+        .expect("remote video upload should reach transcoding");
+    let label_name = format!("label-{}", generate_random_password());
+    let label_result = client.create_label(&label_name).await;
+
+    if let Err(error) = label_result {
+        client
+            .delete_video(&video.shortcode)
+            .await
+            .expect("remote video cleanup should succeed");
+        panic!("remote label creation should succeed: {error}");
+    }
+
+    let label = label_result.expect("checked successful remote label result");
+    let assigned_result = client.set_video_labels(&video.shortcode, &[label.id]).await;
+    let cleared_result = client.set_video_labels(&video.shortcode, &[]).await;
+    let deleted_label_result = client.delete_label(label.id).await;
+    let deleted_video_result = client.delete_video(&video.shortcode).await;
+
+    assigned_result.expect("remote video label assignment should succeed");
+    cleared_result.expect("remote video label clearing should succeed");
+    deleted_label_result.expect("remote label cleanup should succeed");
+    deleted_video_result.expect("remote video cleanup should succeed");
+}
+
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
 async fn remote_label_lifecycle() {

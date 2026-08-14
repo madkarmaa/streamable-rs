@@ -402,6 +402,53 @@ impl ApiRequest for RenameLabelRequest {
     }
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SetVideoLabelsRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+    pub(crate) labels: Vec<u64>,
+}
+
+impl SetVideoLabelsRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str, label_ids: &[u64]) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/videos/{shortcode}/labels"),
+            shortcode: shortcode.to_string(),
+            labels: label_ids.to_vec(),
+        }
+    }
+}
+
+impl ApiRequest for SetVideoLabelsRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> reqwest::Method {
+        reqwest::Method::POST
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        if let Some(error) = common_api_error(&response) {
+            return Err(error);
+        }
+
+        if !response.status().is_success() {
+            return Err(StreamableError::VideoLabelAssignmentFailed {
+                shortcode: self.shortcode.clone(),
+                status: response.status().as_u16(),
+            });
+        }
+
+        response.into_empty()
+    }
+}
+
 /// Basic current-user data available without authentication.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnauthenticatedUser {

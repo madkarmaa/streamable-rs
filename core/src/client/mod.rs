@@ -365,6 +365,20 @@ impl StreamableClient<Authenticated> {
             .await
     }
 
+    /// Replaces every label assigned to a video.
+    ///
+    /// Label IDs retain their input order. Passing an empty slice removes every label from the
+    /// video.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the session is invalid, Streamable rejects the assignment, or the
+    /// request fails.
+    pub async fn set_video_labels(&self, shortcode: &str, label_ids: &[u64]) -> Result<()> {
+        self.execute(&models::SetVideoLabelsRequest::new(shortcode, label_ids))
+            .await
+    }
+
     /// Logs out the currently authenticated user.
     ///
     /// # Errors
