@@ -1,6 +1,7 @@
 # Streamable dashboard More menu: Edit labels
 
-Implementation status: **Not implemented in `streamable-rs`; label lifecycle APIs alone are implemented.**
+Implementation status: **Implemented in `streamable-rs` through
+`AuthenticatedStreamableClient::set_video_labels`.**
 
 Captured 2026-08-13 from the authenticated Streamable dashboard, production
 source maps, and Chrome DevTools network inspection. This file records only the
@@ -213,18 +214,28 @@ verified sequence was:
 No account identifier, credential, cookie, concrete shortcode, or concrete
 label ID is durable project state.
 
-## Future Rust implementation guidance
+## Rust implementation
 
-The Rust client already has account-label CRUD operations. Video assignment
-should be a separate absolute-replacement operation such as:
+The Rust client keeps video assignment separate from account-label CRUD:
 
 ```text
 set_video_labels(shortcode, label_ids)
 ```
 
-Keep the fixed `/videos/<shortcode>/labels` suffix internal. Accept label IDs,
-sort them before serialization, send the authenticated session cookie, and
-accept a successful empty response rather than attempting JSON decoding.
+`SetVideoLabelsRequest` keeps the fixed `/videos/<shortcode>/labels` suffix
+internal. The public method accepts a label-ID slice, sorts IDs before
+serialization, sends the authenticated session cookie, and accepts a
+successful empty response rather than attempting JSON decoding. Passing an
+empty slice removes all labels. Other non-success statuses map to
+`VideoLabelAssignmentFailed`, while shared invalid-session and rate-limit
+responses retain their existing domain errors.
+
+Deterministic mock tests cover the exact path, method, cookie, sorted and empty
+replacement bodies, bodyless success, endpoint-specific failure, and shared
+error mappings. A bounded feature-gated remote test uploads one disposable
+video, creates one disposable label, assigns and clears it, then deletes both
+resources. It is compiled by the all-features Clippy gate but is not run by
+default.
 
 Bulk assignment can be built above the single-video primitive. If it mirrors
 the dashboard, document that it is non-transactional: successful videos remain
