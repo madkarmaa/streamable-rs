@@ -1,7 +1,8 @@
 # Streamable dashboard More menu: Privacy
 
 Implementation status: **Implemented in `streamable-rs` through per-video
-update, reset, and explicit refresh operations.**
+update, reset, and explicit refresh operations on both authenticated and
+unauthenticated client states.**
 
 Captured 2026-08-13 from the authenticated Streamable dashboard, production
 source maps, Chrome DevTools network inspection, and comparison with the
@@ -357,6 +358,11 @@ the optional `Video::privacy_settings` field. Successful 204 responses are
 empty. `get_video` keeps the authoritative follow-up GET explicit rather than
 hiding a second request inside update or reset.
 
+All three per-video operations live on the state-generic client implementation,
+so guest-owned videos can be updated, reset, and refreshed without converting
+the client to its authenticated type state. Requests still send any cookie the
+client already holds; authentication is not a Rust API prerequisite.
+
 PATCH and DELETE preserve the observed JSON, pragma, and cache-control headers.
 DELETE remains bodyless. Non-success message payloads map to explicit update or
 reset domain errors, while invalid-session and rate-limit errors retain shared
@@ -373,7 +379,8 @@ Local mock coverage should verify:
 
 1. each update uses PATCH on the full
    `/api/v1/videos/<shortcode>/settings` path;
-2. the authenticated cookie and JSON/cache-control headers are present;
+2. JSON/cache-control headers are present, and unauthenticated clients do not
+   require an authentication cookie;
 3. a single-field change serializes only that field;
 4. `hidden_on_streamable` is preserved as an exact wire value;
 5. password removal serializes JSON null;
@@ -385,6 +392,6 @@ Local mock coverage should verify:
 10. account-level `/me/settings` behavior remains unchanged.
 
 Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use a disposable authenticated
-video, serialize through `REMOTE_TEST_LOCK`, make the minimum mutations, and
-finish with DELETE reset plus a GET proving `is_custom:false`.
+`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use a disposable video, serialize
+through `REMOTE_TEST_LOCK`, make the minimum mutations, and finish with DELETE
+reset plus a GET proving `is_custom:false`.
