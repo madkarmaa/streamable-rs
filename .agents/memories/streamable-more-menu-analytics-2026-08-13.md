@@ -1,6 +1,6 @@
 # Streamable dashboard More menu: Analytics
 
-Implementation status: **Not implemented in `streamable-rs`.**
+Implementation status: **Implemented in `streamable-rs`.**
 
 Captured 2026-08-13 from current Streamable web UI, current production JavaScript,
 and Chrome DevTools network inspection. This file records only the **Analytics**
@@ -62,6 +62,24 @@ On success, the response shape is:
 
 The client updates the displayed count, waits 5,000 ms, and polls again. Any
 request failure stops polling rather than retrying indefinitely.
+
+An authenticated production capture confirmed this successful summary shape
+through the API's internal `MOCK=true` option:
+
+```json
+{
+    "countries": [{ "source": "US", "count": 1 }],
+    "platforms": [{ "source": "desktop", "count": 1 }],
+    "referrers": [{ "source": "direct", "count": 1 }],
+    "group": "day",
+    "plays": [{ "date": "2026-08-13", "count": 1 }],
+    "from_date": "2026-08-13",
+    "to_date": "2026-08-14"
+}
+```
+
+The values vary. The top-level fields and item fields above are the verified
+wire names.
 
 ## Analytics subfeatures and response concepts
 
@@ -125,22 +143,17 @@ The first two populate historical plays and referring articles. The live stats
 request populates the legacy live view state. These endpoints are source-derived
 fallback behavior; the current live session selected the new summary branch.
 
-## Future Rust implementation guidance
+## Rust API mapping
 
-Keep route selection and API details internal. A future client API should model
-at least:
+`StreamableClient` exposes separate bounded calls:
 
-- summary analytics separately from live-view polling;
-- `{count}` for the live endpoint;
-- dated counts for view history;
-- source/count groups for traffic, geography, and devices;
-- explicit non-success responses, including the observed guest HTTP 500;
-- an opt-in polling helper with a caller-controlled interval and cancellation,
-  rather than an unstoppable background loop.
+- `get_video_analytics` returns `VideoAnalyticsSummary`;
+- `get_video_live_views` returns `VideoLiveViews`.
 
-Before implementation, capture a successful authenticated summary response to
-lock down exact top-level field names and date/group enum values. Do not invent
-those fields from chart component names alone.
+Both work for authenticated and unauthenticated client states. They keep route
+details internal, send bodyless GET requests, and preserve the status and server
+message in endpoint-specific errors. There is no background polling helper;
+callers choose if and when to repeat the live call.
 
 ## Deterministic test targets
 
@@ -150,9 +163,9 @@ Local mock coverage should verify:
 2. `GET /api/v1/videos/<shortcode>/analytics/live` uses no request body;
 3. `{ "count": 0 }` deserializes without treating zero as missing;
 4. non-2xx summary responses preserve status and server message;
-5. polling waits between successful calls and stops on cancellation or error;
-6. any legacy API added later uses the exact `ajax.streamable.com` paths above.
+5. any legacy API added later uses the exact `ajax.streamable.com` paths above.
 
 Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER` and should perform only bounded GET
-requests. It must not rely on the guest HTTP 500 remaining stable.
+`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`. The current remote test uploads one
+small video, leaves it in the shared test account, and performs one live-view
+GET. It does not rely on the guest HTTP 500 remaining stable.
