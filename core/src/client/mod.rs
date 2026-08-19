@@ -127,15 +127,18 @@ pub struct StreamableClient<State = Unauthenticated, T = DefaultTransport> {
     state: State,
 }
 
-/// An initialized Streamable upload awaiting file transfer and transcoding.
+/// An allocated Streamable upload awaiting initialization, file transfer, and transcoding.
 ///
 /// Create one with [`StreamableClient::begin_video_upload`]. Call [`Self::complete`] for normal
 /// completion or [`Self::cancel`] for explicit cleanup.
+#[must_use = "the upload must be completed or explicitly cancelled"]
 pub struct VideoUpload<'a, State = Unauthenticated, T = DefaultTransport> {
     client: &'a StreamableClient<State, T>,
     upload_info: models::UploadInfo,
     video_file: PathBuf,
     size: u64,
+    original_name: String,
+    title: String,
 }
 
 impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
@@ -154,30 +157,37 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
         }
     }
 
-    /// Streams the file to S3 and asks Streamable to transcode it.
+    /// Initializes the upload, streams the file to S3, and asks Streamable to transcode it.
     ///
     /// # Errors
     ///
     /// Returns the upload failure after attempting `/cancel`. If cleanup also fails,
     /// [`StreamableError::UploadRollback`] preserves both errors.
     pub async fn complete(self) -> Result<models::Video> {
-        let shortcode = self.upload_info.shortcode.clone();
+        let Self {
+            client,
+            upload_info,
+            video_file,
+            size,
+            original_name,
+            title,
+        } = self;
+        let shortcode = upload_info.shortcode.clone();
         let result = async {
-            self.client
-                .upload_video_file_to_s3(&self.upload_info, self.size, &self.video_file)
+            client
+                .initialize_video_upload(&upload_info, size, original_name, title)
                 .await?;
-            self.client
-                .transcode_video_after_upload(&self.upload_info)
-                .await
+            client
+                .upload_video_file_to_s3(&upload_info, size, &video_file)
+                .await?;
+            client.transcode_video_after_upload(&upload_info).await
         }
         .await;
 
-        self.client
-            .finish_upload_or_rollback(&shortcode, result)
-            .await
+        client.finish_upload_or_rollback(&shortcode, result).await
     }
 
-    /// Cancels this initialized upload on Streamable.
+    /// Cancels this allocated upload on Streamable.
     ///
     /// # Errors
     ///
@@ -189,7 +199,7 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
     }
 }
 
-/// Lightweight cancellation handle for an initialized [`VideoUpload`].
+/// Lightweight cancellation handle for an allocated [`VideoUpload`].
 pub struct VideoUploadHandle<'a, State = Unauthenticated, T = DefaultTransport> {
     client: &'a StreamableClient<State, T>,
     shortcode: String,
@@ -211,7 +221,7 @@ impl<State: Sync, T: HttpTransport> VideoUploadHandle<'_, State, T> {
         &self.shortcode
     }
 
-    /// Cancels the initialized upload on Streamable.
+    /// Cancels the allocated upload on Streamable.
     ///
     /// # Errors
     ///
@@ -713,7 +723,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .await
     }
 
-    /// Allocates and initializes a video upload without transferring the file.
+    /// Allocates a video upload without initializing or transferring the file.
     ///
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {
@@ -726,8 +736,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
     ///
     /// # Errors
     ///
-    /// Returns an error when the path is invalid, shortcode allocation fails, or Streamable
-    /// rejects initialization. An initialization failure attempts `/cancel` automatically.
+    /// Returns an error when the path is invalid or shortcode allocation fails.
     pub async fn begin_video_upload(
         &self,
         video_file: impl AsRef<Path>,
@@ -761,17 +770,14 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
 
         let size = metadata.len();
         let upload_info = self.generate_shortcode(size).await?;
-        let shortcode = upload_info.shortcode.clone();
-        let result = self
-            .initialize_video_upload(&upload_info, size, original_name, title)
-            .await;
-        self.finish_upload_or_rollback(&shortcode, result).await?;
 
         Ok(VideoUpload {
             client: self,
             upload_info,
             video_file,
             size,
+            original_name,
+            title,
         })
     }
 

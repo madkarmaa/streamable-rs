@@ -554,7 +554,7 @@ async fn video_upload_s3_failure_cancels_initialized_upload() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn initialized_upload_handle_cancels_without_transferring_file() {
+async fn allocated_upload_handle_cancels_before_initialization() {
     let mock_server = MockServer::start().await;
     let video_path = media_path("webm.webm");
     let video_size = std::fs::metadata(&video_path)
@@ -563,12 +563,6 @@ async fn initialized_upload_handle_cancels_without_transferring_file() {
     Mock::given(method("GET"))
         .and(path("/api/v1/uploads/shortcode"))
         .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
-        .expect(1)
-        .mount(&mock_server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/api/v1/videos/mock/initialize"))
-        .respond_with(ResponseTemplate::new(200))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -583,7 +577,7 @@ async fn initialized_upload_handle_cancels_without_transferring_file() {
     let upload = client
         .begin_video_upload(video_path, None)
         .await
-        .expect("upload should initialize");
+        .expect("upload should allocate a shortcode");
     let handle = upload.handle();
     assert_eq!(handle.shortcode(), "mock");
     let cancel = handle.clone();
@@ -605,7 +599,6 @@ async fn initialized_upload_handle_cancels_without_transferring_file() {
             .collect::<Vec<_>>(),
         [
             ("GET", "/api/v1/uploads/shortcode"),
-            ("POST", "/api/v1/videos/mock/initialize"),
             ("POST", "/api/v1/videos/mock/cancel"),
         ]
     );

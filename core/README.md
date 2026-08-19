@@ -30,7 +30,7 @@ client.set_video_labels("abc123", &[label.id]).await?;
 # Ok(()) }
 ```
 
-Manage an initialized upload explicitly when the application needs cancellation:
+Manage an allocated upload explicitly when the application needs cancellation:
 
 ```no_run
 use streamable::{Result, StreamableClient};
