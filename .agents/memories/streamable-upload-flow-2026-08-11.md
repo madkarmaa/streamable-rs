@@ -1473,6 +1473,17 @@ models use `http::Method`, `http::HeaderMap`, and runtime-neutral bodies; no mod
 uses `reqwest::RequestBuilder`. `ApiResponse` maps non-success responses from its
 `http::StatusCode` rather than retaining `reqwest::Error`.
 
+`core/src/client/mod.rs` keeps request-specific URL resolution, serialization,
+and response decoding in `StreamableClient::execute<Req>`. The async transport
+pipeline lives in module-level `send_request<T>`, which is generic only over the
+transport and owns cookies, default JSON content type, transport execution, and
+response-cookie storage. Keeping it independent of both request and client
+typestate avoids duplicating that state machine for every API request or auth
+state. For the five CLI request types measured with `cargo llvm-lines --release`,
+each `execute` closure fell from 521 to 297 LLVM IR lines and one 459-line shared
+`send_request` closure replaced the duplicated pipeline (2,605 to 1,944 lines,
+about 25% fewer across those functions).
+
 Upload cancellation uses a standard-library atomic flag and waker list rather
 than `tokio::sync::Notify` or `tokio::select!`. Path canonicalization and metadata
 checks use `std::fs`; file contents remain transport-streamed. Once shortcode
