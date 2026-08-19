@@ -44,6 +44,7 @@ done <"$tmp/files"
 
 if git diff --cached --name-only --diff-filter=ACMR -- '*.rs' | grep -q .; then
     cargo fmt --all -- --check
+    cargo check -p streamable-rs --no-default-features
     cargo test --workspace
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 fi
