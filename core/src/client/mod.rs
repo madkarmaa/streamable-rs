@@ -8,7 +8,7 @@ use crate::{
 };
 use cookie_store::CookieStore;
 use http::{
-    HeaderValue,
+    HeaderMap, HeaderValue, Method,
     header::{CONTENT_TYPE, COOKIE},
 };
 use std::{
@@ -78,6 +78,67 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+async fn send_request<T: HttpTransport>(
+    transport: &T,
+    cookies: &Mutex<CookieStore>,
+    method: Method,
+    endpoint_url: Url,
+    mut headers: HeaderMap,
+    body: Body,
+) -> Result<ApiResponse> {
+    if let Some(cookie) = cookie_header(cookies, &endpoint_url)? {
+        headers.insert(COOKIE, cookie);
+    }
+    if matches!(body, Body::Bytes(_)) && !headers.contains_key(CONTENT_TYPE) {
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    }
+    let request = TransportRequest {
+        method,
+        url: endpoint_url.clone(),
+        headers,
+        body,
+    };
+    let response = transport
+        .execute(request)
+        .await
+        .map_err(StreamableError::transport)?;
+
+    store_response_cookies(cookies, &endpoint_url, &response.headers);
+    Ok(ApiResponse::new(
+        response.status,
+        endpoint_url,
+        response.body,
+    ))
+}
+
+fn cookie_header(cookies: &Mutex<CookieStore>, url: &Url) -> Result<Option<HeaderValue>> {
+    let value = lock_unpoisoned(cookies)
+        .get_request_values(url)
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    HeaderValue::from_str(&value)
+        .map(Some)
+        .map_err(StreamableError::InvalidHeader)
+}
+
+fn store_response_cookies(cookies: &Mutex<CookieStore>, url: &Url, headers: &HeaderMap) {
+    let response_cookies = headers
+        .get_all(http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut store = lock_unpoisoned(cookies);
+    for cookie in response_cookies {
+        let _ = store.parse(&cookie, url);
+    }
 }
 
 #[derive(Debug)]
@@ -877,59 +938,16 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         Req: ApiRequest + Sync,
     {
         let endpoint_url = self.endpoint_routing.resolve(req.url())?;
-        let mut headers = req.headers();
-        if let Some(cookie) = self.cookie_header(&endpoint_url)? {
-            headers.insert(COOKIE, cookie);
-        }
-        let body = req.body()?;
-        if matches!(body, Body::Bytes(_)) && !headers.contains_key(CONTENT_TYPE) {
-            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        }
-        let request = TransportRequest {
-            method: req.method(),
-            url: endpoint_url.clone(),
-            headers,
-            body,
-        };
-        let response = self
-            .transport
-            .execute(request)
-            .await
-            .map_err(StreamableError::transport)?;
-
-        self.store_response_cookies(&endpoint_url, &response.headers);
-        req.decode_response(ApiResponse::new(
-            response.status,
+        let response = send_request(
+            &self.transport,
+            &self.cookies,
+            req.method(),
             endpoint_url,
-            response.body,
-        ))
-    }
+            req.headers(),
+            req.body()?,
+        )
+        .await?;
 
-    fn cookie_header(&self, url: &Url) -> Result<Option<HeaderValue>> {
-        let value = lock_unpoisoned(&self.cookies)
-            .get_request_values(url)
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect::<Vec<_>>()
-            .join("; ");
-        if value.is_empty() {
-            return Ok(None);
-        }
-
-        HeaderValue::from_str(&value)
-            .map(Some)
-            .map_err(StreamableError::InvalidHeader)
-    }
-
-    fn store_response_cookies(&self, url: &Url, headers: &http::HeaderMap) {
-        let cookies = headers
-            .get_all(http::header::SET_COOKIE)
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        let mut store = lock_unpoisoned(&self.cookies);
-        for cookie in cookies {
-            let _ = store.parse(&cookie, url);
-        }
+        req.decode_response(response)
     }
 }
