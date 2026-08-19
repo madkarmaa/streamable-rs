@@ -5,8 +5,8 @@ use thiserror::Error;
 ///
 /// ```
 /// use streamable::StreamableError;
-/// let error = StreamableError::UploadCancelled { shortcode: None };
-/// assert_eq!(error.to_string(), "video upload was cancelled");
+/// let error = StreamableError::InvalidSession { message: "expired".into() };
+/// assert_eq!(error.to_string(), "expired");
 /// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -133,11 +133,15 @@ pub enum StreamableError {
         message: String,
     },
 
-    /// The upload was cancelled.
-    #[error("video upload was cancelled")]
-    UploadCancelled {
-        /// Video shortcode, if one was assigned.
-        shortcode: Option<String>,
+    /// An allocated upload failed and Streamable also rejected its cleanup request.
+    #[error("video upload '{shortcode}' failed ({source}) and rollback failed ({rollback})")]
+    UploadRollback {
+        /// Allocated video shortcode.
+        shortcode: String,
+        /// Original upload failure.
+        source: Box<Self>,
+        /// Cleanup request failure.
+        rollback: Box<Self>,
     },
 
     /// Video deletion returned an unexpected body.
@@ -153,9 +157,30 @@ pub enum StreamableError {
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
-    /// The HTTP request failed.
-    #[error(transparent)]
-    Request(#[from] reqwest::Error),
+    /// The HTTP transport could not complete a request.
+    #[error("HTTP transport failed: {source}")]
+    Transport {
+        /// Transport-specific source error.
+        #[source]
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
+
+    /// An HTTP response had a non-success status not mapped to a domain error.
+    #[error("HTTP status {status} from {endpoint}")]
+    HttpStatus {
+        /// Numeric HTTP status.
+        status: u16,
+        /// Request endpoint.
+        endpoint: String,
+    },
+
+    /// A request body could not be encoded.
+    #[error("request body could not be encoded: {0}")]
+    RequestEncode(serde_json::Error),
+
+    /// A cookie could not be represented as an HTTP header.
+    #[error("invalid HTTP header value: {0}")]
+    InvalidHeader(http::header::InvalidHeaderValue),
 
     /// The response body had an unexpected shape.
     #[error(transparent)]
@@ -173,3 +198,11 @@ pub enum StreamableError {
 /// assert!(upload().is_ok());
 /// ```
 pub type Result<T> = std::result::Result<T, StreamableError>;
+
+impl StreamableError {
+    pub(crate) fn transport(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self::Transport {
+            source: Box::new(error),
+        }
+    }
+}

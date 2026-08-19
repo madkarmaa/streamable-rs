@@ -2,10 +2,11 @@ use super::*;
 use crate::{StreamableError, utils::*};
 
 use serde_json::json;
+use std::sync::Arc;
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 use wiremock::matchers::{body_bytes, body_json, header, query_param};
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-use wiremock::{Match, Request, Respond};
+use wiremock::{Match, Request};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
@@ -60,19 +61,6 @@ async fn remote_authenticated_client()
 struct NoCookieHeader;
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-struct CancelUploadOnRequest {
-    cancellation: UploadCancellationToken,
-}
-
-#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-impl Respond for CancelUploadOnRequest {
-    fn respond(&self, _request: &Request) -> ResponseTemplate {
-        self.cancellation.cancel();
-        ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5))
-    }
-}
-
-#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 impl Match for NoCookieHeader {
     fn matches(&self, request: &Request) -> bool {
         !request.headers.contains_key("cookie")
@@ -85,6 +73,7 @@ fn authenticated_user(email: &str) -> serde_json::Value {
         "socket": "mock-socket",
         "total_plays": 0,
         "total_uploads": 0,
+        "total_videos": 0,
         "id": 1,
         "user_name": email,
         "email": email,
@@ -105,11 +94,17 @@ fn authenticated_user(email: &str) -> serde_json::Value {
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-fn unauthenticated_user(socket: &str, total_plays: u32, total_uploads: u32) -> serde_json::Value {
+fn unauthenticated_user(
+    socket: &str,
+    total_plays: u32,
+    total_uploads: u32,
+    total_videos: u32,
+) -> serde_json::Value {
     json!({
         "socket": socket,
         "total_plays": total_plays,
-        "total_uploads": total_uploads
+        "total_uploads": total_uploads,
+        "total_videos": total_videos
     })
 }
 
@@ -277,12 +272,56 @@ fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableErr
     }
 }
 
+#[derive(Clone, Default)]
+struct RecordingTransport {
+    requests: Arc<Mutex<Vec<crate::transport::Request>>>,
+}
+
+impl HttpTransport for RecordingTransport {
+    type Error = std::io::Error;
+
+    async fn execute(
+        &self,
+        request: crate::transport::Request,
+    ) -> std::result::Result<crate::transport::Response, Self::Error> {
+        let requests = Arc::clone(&self.requests);
+        lock_unpoisoned(&requests).push(request);
+        Ok(crate::transport::Response {
+            status: http::StatusCode::OK,
+            headers: http::HeaderMap::new(),
+            body: bytes::Bytes::from_static(b"true"),
+        })
+    }
+}
+
 #[tokio::test]
 async fn test_api_client_initialization() {
     let client = StreamableClient::new().expect("client should initialize");
 
     assert!(!client.is_authenticated());
     assert_eq!(client.user(), None);
+}
+
+#[tokio::test]
+async fn caller_supplied_transport_receives_runtime_neutral_request() {
+    let transport = RecordingTransport::default();
+    let requests = Arc::clone(&transport.requests);
+    let client = StreamableClient::with_transport(transport);
+
+    client
+        .delete_video("custom")
+        .await
+        .expect("custom transport response should decode");
+
+    let requests = lock_unpoisoned(&requests);
+    let request = requests
+        .first()
+        .expect("custom transport should receive one request");
+    assert_eq!(request.method, http::Method::DELETE);
+    assert_eq!(request.url.path(), "/api/v1/videos/custom");
+    assert!(request.headers.is_empty());
+    assert!(matches!(request.body, Body::Empty));
+    drop(requests);
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -417,20 +456,44 @@ async fn video_upload_defaults_title_to_file_stem() {
         .expect(1)
         .mount(&mock_server)
         .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/cancel"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
 
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
-    client
+    let error = client
         .upload_video(video_path, None)
         .await
         .expect_err("mock initialization failure should stop the upload");
+    assert!(matches!(
+        error,
+        StreamableError::HttpStatus { status: 400, .. }
+    ));
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.url.path())
+            .collect::<Vec<_>>(),
+        [
+            "/api/v1/uploads/shortcode",
+            "/api/v1/videos/mock/initialize",
+            "/api/v1/videos/mock/cancel",
+        ]
+    );
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
+async fn video_upload_s3_failure_cancels_initialized_upload() {
     let mock_server = MockServer::start().await;
     let video_path = media_path("webm.webm");
-    let cancellation = UploadCancellationToken::new();
     let video_size = std::fs::metadata(&video_path)
         .expect("video fixture should exist")
         .len();
@@ -448,9 +511,7 @@ async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
         .await;
     Mock::given(method("PUT"))
         .and(path("/upload/mock"))
-        .respond_with(CancelUploadOnRequest {
-            cancellation: cancellation.clone(),
-        })
+        .respond_with(ResponseTemplate::new(500))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -462,17 +523,19 @@ async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
         .await;
 
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
-    let error = client
-        .upload_video_with_cancellation(video_path, None, cancellation.clone())
+    let upload = client
+        .begin_video_upload(video_path, None)
         .await
-        .expect_err("cancelled upload should stop before transcoding");
+        .expect("upload should allocate a shortcode");
+    assert_eq!(upload.shortcode(), "mock");
+    let error = upload
+        .complete()
+        .await
+        .expect_err("S3 failure should stop before transcoding");
 
-    assert!(cancellation.is_cancelled());
     assert!(matches!(
         error,
-        StreamableError::UploadCancelled {
-            shortcode: Some(ref shortcode)
-        } if shortcode == "mock"
+        StreamableError::HttpStatus { status: 500, .. }
     ));
     let requests = mock_server
         .received_requests()
@@ -498,25 +561,59 @@ async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn pre_cancelled_video_upload_makes_no_request() {
+async fn allocated_upload_handle_cancels_before_initialization() {
     let mock_server = MockServer::start().await;
-    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
-    let cancellation = UploadCancellationToken::new();
-    cancellation.cancel();
-    let error = client
-        .upload_video_with_cancellation(media_path("webm.webm"), None, cancellation)
-        .await
-        .expect_err("pre-cancelled upload should not start");
+    let video_path = media_path("webm.webm");
+    let video_size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/cancel"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
 
-    assert!(matches!(
-        error,
-        StreamableError::UploadCancelled { shortcode: None }
-    ));
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    let upload = client
+        .begin_video_upload(video_path, None)
+        .await
+        .expect("upload should allocate a shortcode");
+    let handle = upload.handle();
+    assert_eq!(handle.shortcode(), "mock");
+    let cancel = handle.clone();
+    drop(handle);
+    drop(upload);
+    cancel
+        .cancel()
+        .await
+        .expect("explicit cancellation should succeed");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.url.path()))
+            .collect::<Vec<_>>(),
+        [
+            ("GET", "/api/v1/uploads/shortcode"),
+            ("POST", "/api/v1/videos/mock/cancel"),
+        ]
+    );
     assert!(
-        mock_server
-            .received_requests()
-            .await
-            .expect("mock server should record requests")
+        requests
+            .last()
+            .expect("cancel request should be recorded")
+            .body
             .is_empty()
     );
 }
@@ -692,7 +789,7 @@ async fn delete_video_preserves_common_and_http_errors() {
         .expect_err("ordinary HTTP error should fail");
     assert!(matches!(
         status_error,
-        StreamableError::Request(ref error) if error.status() == Some(reqwest::StatusCode::NOT_FOUND)
+        StreamableError::HttpStatus { status: 404, .. }
     ));
 
     let rate_limit_error = client
@@ -724,7 +821,7 @@ async fn delete_video_propagates_transport_errors() {
         .await
         .expect_err("transport failure should propagate");
 
-    assert!(matches!(error, StreamableError::Request(_)));
+    assert!(matches!(error, StreamableError::Transport { .. }));
 }
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
@@ -794,7 +891,7 @@ async fn unauthenticated_client_refreshes_basic_user_data() {
         .and(path("/api/v1/me"))
         .and(NoCookieHeader)
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(unauthenticated_user("anonymous", 12, 3)),
+            ResponseTemplate::new(200).set_body_json(unauthenticated_user("anonymous", 12, 4, 3)),
         )
         .expect(1)
         .mount(&mock_server)
@@ -804,7 +901,8 @@ async fn unauthenticated_client_refreshes_basic_user_data() {
     let expected_user = models::UnauthenticatedUser {
         socket: "anonymous".to_string(),
         total_plays: 12,
-        total_uploads: 3,
+        total_uploads: 4,
+        total_videos: 3,
     };
     {
         let user = client
@@ -836,7 +934,8 @@ async fn authenticated_client_refreshes_full_user_data() {
 
     let mut refreshed_user = authenticated_user(email);
     refreshed_user["total_plays"] = json!(42);
-    refreshed_user["total_uploads"] = json!(7);
+    refreshed_user["total_uploads"] = json!(8);
+    refreshed_user["total_videos"] = json!(7);
     refreshed_user["bio"] = json!("refreshed");
     Mock::given(method("GET"))
         .and(path("/api/v1/me"))
@@ -856,8 +955,10 @@ async fn authenticated_client_refreshes_full_user_data() {
         .await
         .expect("authenticated user refresh should succeed");
 
-    assert_eq!(user.unauthenticated.total_plays, 42);
-    assert_eq!(user.unauthenticated.total_uploads, 7);
+    assert_eq!(user.total_plays, 42);
+    assert_eq!(user.total_uploads, 8);
+    assert_eq!(user.total_videos, 7);
+    assert_eq!(user.unauthenticated.total_videos, 7);
     assert_eq!(user.bio, "refreshed");
     assert_eq!(client.user().bio, "refreshed");
 }
@@ -961,7 +1062,7 @@ async fn test_successful_registration_and_login() {
     assert_eq!(registered_client.user().email, email);
     assert!(registered_client.is_authenticated());
 
-    let login_client = registered_client.logout().expect("logout should succeed");
+    let login_client = registered_client.logout();
 
     assert!(!login_client.is_authenticated());
 

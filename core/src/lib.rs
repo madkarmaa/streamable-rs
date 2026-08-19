@@ -7,7 +7,7 @@ mod constants;
 ///
 /// ```
 /// use streamable::errors::{Result, StreamableError};
-/// let result: Result<()> = Err(StreamableError::UploadCancelled { shortcode: None });
+/// let result: Result<()> = Err(StreamableError::InvalidSession { message: "expired".into() });
 /// assert!(result.is_err());
 /// ```
 pub mod errors;
@@ -29,6 +29,8 @@ pub mod models;
 /// fn status(response: &ApiResponse) { println!("{}", response.status()); }
 /// ```
 pub mod response;
+/// Runtime-neutral HTTP transport contract and default reqwest adapter.
+pub mod transport;
 /// Small helpers used by the client.
 ///
 /// ```
@@ -39,7 +41,7 @@ pub mod utils;
 
 pub use client::{
     Authenticated, AuthenticatedStreamableClient, StreamableClient, Unauthenticated,
-    UnauthenticatedStreamableClient, UploadCancellationToken,
+    UnauthenticatedStreamableClient, VideoUpload, VideoUploadHandle,
 };
 pub use errors::{Result, StreamableError};
 pub use response::ApiResponse;
