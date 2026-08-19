@@ -1,16 +1,15 @@
 use crate::models::UploadInfo;
 use hmac::{Hmac, Mac};
-use reqwest::{
-    Method, Url,
-    header::{
-        AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderMap, HeaderName, HeaderValue,
-    },
+use http::{
+    HeaderMap, Method,
+    header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderName, HeaderValue},
 };
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use thiserror::Error;
 use time::{OffsetDateTime, macros::format_description};
+use url::Url;
 
 #[cfg(test)]
 mod tests;
@@ -50,7 +49,7 @@ pub enum S3Error {
     InvalidHeaderValue {
         name: String,
         #[source]
-        source: reqwest::header::InvalidHeaderValue,
+        source: http::header::InvalidHeaderValue,
     },
 
     #[error("required signing header is missing: {name}")]
@@ -60,7 +59,7 @@ pub enum S3Error {
     NonAsciiSigningHeader {
         name: String,
         #[source]
-        source: reqwest::header::ToStrError,
+        source: http::header::ToStrError,
     },
 }
 

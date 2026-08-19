@@ -29,6 +29,8 @@ pub mod models;
 /// fn status(response: &ApiResponse) { println!("{}", response.status()); }
 /// ```
 pub mod response;
+/// Runtime-neutral HTTP transport contract and default reqwest adapter.
+pub mod transport;
 /// Small helpers used by the client.
 ///
 /// ```

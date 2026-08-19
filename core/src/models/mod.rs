@@ -5,23 +5,33 @@ use crate::constants::{
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
+    transport::Body,
 };
-use reqwest::StatusCode;
+use http::{
+    HeaderMap, HeaderValue, StatusCode,
+    header::{CACHE_CONTROL, CONTENT_TYPE, PRAGMA},
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::marker::PhantomData;
 
 #[cfg(test)]
 mod tests;
 
-pub(crate) trait ApiRequest: Serialize {
+pub(crate) trait ApiRequest: Serialize + Sized {
     type Response;
 
     fn url(&self) -> &str;
 
-    fn method(&self) -> reqwest::Method;
+    fn method(&self) -> http::Method;
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request.json(self)
+    fn headers(&self) -> HeaderMap {
+        HeaderMap::new()
+    }
+
+    fn body(&self) -> StreamableResult<Body> {
+        serde_json::to_vec(self)
+            .map(|body| Body::Bytes(body.into()))
+            .map_err(StreamableError::RequestEncode)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response>;
@@ -90,12 +100,12 @@ where
         ME_URL
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::GET
+    fn method(&self) -> http::Method {
+        http::Method::GET
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -139,8 +149,8 @@ impl ApiRequest for CreateUserRequest {
         REGISTER_URL
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -191,8 +201,8 @@ impl ApiRequest for LoginRequest {
         LOGIN_URL
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -238,8 +248,8 @@ impl ApiRequest for ChangePasswordRequest {
         CHANGE_PASSWORD_URL
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -286,8 +296,8 @@ impl ApiRequest for CreateLabelRequest {
         LABELS_URL
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -343,12 +353,12 @@ impl ApiRequest for DeleteLabelRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::DELETE
+    fn method(&self) -> http::Method {
+        http::Method::DELETE
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -391,8 +401,8 @@ impl ApiRequest for RenameLabelRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::PATCH
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -435,8 +445,8 @@ impl ApiRequest for SetVideoLabelsRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -580,8 +590,8 @@ impl ApiRequest for PrivacySettingsRequest {
         SETTINGS_URL
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::PATCH
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -714,15 +724,15 @@ impl ApiRequest for UpdateVideoPrivacyRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::PATCH
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
-            .header(reqwest::header::PRAGMA, "no-cache")
-            .header(reqwest::header::CACHE_CONTROL, "no-cache")
-            .json(self)
+    fn headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+        headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        headers
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -773,15 +783,20 @@ impl ApiRequest for ResetVideoPrivacyRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::DELETE
+    fn method(&self) -> http::Method {
+        http::Method::DELETE
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header(reqwest::header::PRAGMA, "no-cache")
-            .header(reqwest::header::CACHE_CONTROL, "no-cache")
+    fn headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+        headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        headers
+    }
+
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -829,12 +844,12 @@ impl ApiRequest for GetVideoRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::GET
+    fn method(&self) -> http::Method {
+        http::Method::GET
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -940,12 +955,12 @@ impl ApiRequest for GetVideoAnalyticsRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::GET
+    fn method(&self) -> http::Method {
+        http::Method::GET
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -996,12 +1011,12 @@ impl ApiRequest for GetVideoLiveViewsRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::GET
+    fn method(&self) -> http::Method {
+        http::Method::GET
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -1144,12 +1159,12 @@ impl ApiRequest for ShortcodeRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::GET
+    fn method(&self) -> http::Method {
+        http::Method::GET
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -1195,8 +1210,8 @@ impl ApiRequest for InitializeVideoUploadRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -1229,12 +1244,12 @@ impl ApiRequest for CancelVideoUploadRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -1270,12 +1285,12 @@ impl ApiRequest for DeleteVideoRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::DELETE
+    fn method(&self) -> http::Method {
+        http::Method::DELETE
     }
 
-    fn prepare_request(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
@@ -1331,8 +1346,8 @@ impl ApiRequest for TranscodeVideoRequest {
         &self.url
     }
 
-    fn method(&self) -> reqwest::Method {
-        reqwest::Method::POST
+    fn method(&self) -> http::Method {
+        http::Method::POST
     }
 
     fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {

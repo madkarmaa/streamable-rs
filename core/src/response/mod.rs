@@ -1,5 +1,5 @@
 use bytes::Bytes;
-use reqwest::StatusCode;
+use http::StatusCode;
 use serde::de::DeserializeOwned;
 use std::borrow::Cow;
 use url::Url;
@@ -20,21 +20,14 @@ pub struct ApiResponse {
     status: StatusCode,
     endpoint: Url,
     body: Bytes,
-    status_error: Option<reqwest::Error>,
 }
 
 impl ApiResponse {
-    pub(crate) const fn new(
-        status: StatusCode,
-        endpoint: Url,
-        body: Bytes,
-        status_error: Option<reqwest::Error>,
-    ) -> Self {
+    pub(crate) const fn new(status: StatusCode, endpoint: Url, body: Bytes) -> Self {
         Self {
             status,
             endpoint,
             body,
-            status_error,
         }
     }
 
@@ -89,22 +82,27 @@ impl ApiResponse {
     where
         T: DeserializeOwned,
     {
-        if let Some(error) = self.status_error {
-            return Err(StreamableError::Request(error));
-        }
+        self.ensure_success()?;
 
         Ok(serde_json::from_slice(&self.body)?)
     }
 
     pub(crate) fn into_empty(self) -> Result<()> {
-        if let Some(error) = self.status_error {
-            return Err(StreamableError::Request(error));
-        }
-
-        Ok(())
+        self.ensure_success()
     }
 
     pub(crate) fn api_error(&self) -> Option<crate::models::ErrorResponse> {
         serde_json::from_slice(&self.body).ok()
+    }
+
+    pub(crate) fn ensure_success(&self) -> Result<()> {
+        if self.status.is_success() {
+            return Ok(());
+        }
+
+        Err(StreamableError::HttpStatus {
+            status: self.status.as_u16(),
+            endpoint: self.endpoint.to_string(),
+        })
     }
 }

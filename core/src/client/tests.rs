@@ -277,12 +277,56 @@ fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableErr
     }
 }
 
+#[derive(Clone, Default)]
+struct RecordingTransport {
+    requests: Arc<Mutex<Vec<crate::transport::Request>>>,
+}
+
+impl HttpTransport for RecordingTransport {
+    type Error = std::io::Error;
+
+    async fn execute(
+        &self,
+        request: crate::transport::Request,
+    ) -> std::result::Result<crate::transport::Response, Self::Error> {
+        let requests = Arc::clone(&self.requests);
+        lock_unpoisoned(&requests).push(request);
+        Ok(crate::transport::Response {
+            status: http::StatusCode::OK,
+            headers: http::HeaderMap::new(),
+            body: bytes::Bytes::from_static(b"true"),
+        })
+    }
+}
+
 #[tokio::test]
 async fn test_api_client_initialization() {
     let client = StreamableClient::new().expect("client should initialize");
 
     assert!(!client.is_authenticated());
     assert_eq!(client.user(), None);
+}
+
+#[tokio::test]
+async fn caller_supplied_transport_receives_runtime_neutral_request() {
+    let transport = RecordingTransport::default();
+    let requests = Arc::clone(&transport.requests);
+    let client = StreamableClient::with_transport(transport);
+
+    client
+        .delete_video("custom")
+        .await
+        .expect("custom transport response should decode");
+
+    let requests = lock_unpoisoned(&requests);
+    let request = requests
+        .first()
+        .expect("custom transport should receive one request");
+    assert_eq!(request.method, http::Method::DELETE);
+    assert_eq!(request.url.path(), "/api/v1/videos/custom");
+    assert!(request.headers.is_empty());
+    assert!(matches!(request.body, Body::Empty));
+    drop(requests);
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -417,12 +461,37 @@ async fn video_upload_defaults_title_to_file_stem() {
         .expect(1)
         .mount(&mock_server)
         .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/cancel"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
 
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
-    client
+    let error = client
         .upload_video(video_path, None)
         .await
         .expect_err("mock initialization failure should stop the upload");
+    assert!(matches!(
+        error,
+        StreamableError::HttpStatus { status: 400, .. }
+    ));
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| request.url.path())
+            .collect::<Vec<_>>(),
+        [
+            "/api/v1/uploads/shortcode",
+            "/api/v1/videos/mock/initialize",
+            "/api/v1/videos/mock/cancel",
+        ]
+    );
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -692,7 +761,7 @@ async fn delete_video_preserves_common_and_http_errors() {
         .expect_err("ordinary HTTP error should fail");
     assert!(matches!(
         status_error,
-        StreamableError::Request(ref error) if error.status() == Some(reqwest::StatusCode::NOT_FOUND)
+        StreamableError::HttpStatus { status: 404, .. }
     ));
 
     let rate_limit_error = client
@@ -724,7 +793,7 @@ async fn delete_video_propagates_transport_errors() {
         .await
         .expect_err("transport failure should propagate");
 
-    assert!(matches!(error, StreamableError::Request(_)));
+    assert!(matches!(error, StreamableError::Transport { .. }));
 }
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]

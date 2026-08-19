@@ -44,3 +44,15 @@ cancel.cancel();
 let _ = upload.await;
 # Ok(()) }
 ```
+
+## HTTP runtime
+
+Default `reqwest` feature provides `ReqwestTransport`, preserving `StreamableClient::new()`.
+Disable default features to remove reqwest and Tokio from normal dependencies, then provide any
+runtime through `StreamableClient::with_transport`. Custom transports implement
+`transport::HttpTransport` and receive runtime-neutral `http`/`bytes` request and response types;
+file uploads arrive as `Body::File(PathBuf)` for transport-owned streaming.
+
+Cookies, response status mapping, JSON encoding, and upload cancellation remain client-owned, so
+wire behavior does not change with transport choice. After shortcode allocation, every upload
+failure or cancellation attempts Streamable's `/cancel` rollback endpoint.
