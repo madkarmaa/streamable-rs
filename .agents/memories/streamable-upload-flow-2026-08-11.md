@@ -1489,9 +1489,12 @@ runtime and use Streamable's explicit cleanup operation through a retained
 `VideoUploadHandle`.
 
 `StreamableClient::begin_video_upload` validates the file, allocates a shortcode,
-and completes `/initialize`, then returns `VideoUpload`. `VideoUpload::complete`
-streams the file to S3 and requests transcoding. `VideoUpload::cancel` consumes
-an initialized upload for explicit cleanup; `VideoUpload::handle` returns a
+and immediately returns `VideoUpload` without calling `/initialize`.
+`VideoUpload::complete` initializes the upload, streams the file to S3, and
+requests transcoding. This boundary lets callers retain a cancellation handle
+before initialization can block. `VideoUpload` is `#[must_use]` because dropping
+it abandons an allocated remote resource. `VideoUpload::cancel` consumes an
+allocated upload for explicit cleanup; `VideoUpload::handle` returns a
 clonable handle containing the client reference and shortcode so cleanup remains
 available while another task owns the completion future. `upload_video` remains
 the convenience path and delegates to `begin_video_upload().complete()`.
@@ -1501,3 +1504,7 @@ Library-detected failures after shortcode allocation still attempt one bodyless
 `StreamableError::UploadRollback` with both causes. Dropping an in-flight
 completion future cannot perform async cleanup, so the caller must retain and
 invoke the handle when runtime-level cancellation wins.
+
+The pre-commit hook runs `cargo check -p streamable-rs --no-default-features`
+before workspace tests and Clippy whenever Rust files are staged. This keeps the
+runtime-neutral core configuration continuously build-checked.
