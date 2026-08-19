@@ -1,4 +1,4 @@
-use std::{error::Error as StdError, path::PathBuf};
+use std::path::PathBuf;
 use thiserror::Error;
 
 /// Errors returned by the client.
@@ -162,7 +162,7 @@ pub enum StreamableError {
     Transport {
         /// Transport-specific source error.
         #[source]
-        source: Box<dyn StdError + Send + Sync>,
+        source: Box<dyn std::error::Error + Send + Sync>,
     },
 
     /// An HTTP response had a non-success status not mapped to a domain error.
@@ -200,7 +200,7 @@ pub enum StreamableError {
 pub type Result<T> = std::result::Result<T, StreamableError>;
 
 impl StreamableError {
-    pub(crate) fn transport(error: impl StdError + Send + Sync + 'static) -> Self {
+    pub(crate) fn transport(error: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Transport {
             source: Box::new(error),
         }
