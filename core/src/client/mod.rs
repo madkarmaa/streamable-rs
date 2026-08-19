@@ -298,7 +298,7 @@ impl<T: HttpTransport> StreamableClient<Unauthenticated, T> {
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {
     /// let mut client = streamable::StreamableClient::new()?;
-    /// println!("{}", client.refresh_user().await?.total_uploads);
+    /// println!("{}", client.refresh_user().await?.total_videos);
     /// # Ok(()) }
     /// ```
     ///
@@ -392,7 +392,7 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     ///
     /// ```no_run
     /// fn email(client: &streamable::AuthenticatedStreamableClient) {
-    ///     println!("{}", client.user().email);
+    ///     println!("{} has {} videos", client.user().email, client.user().total_videos);
     /// }
     /// ```
     #[must_use]

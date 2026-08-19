@@ -73,6 +73,7 @@ fn authenticated_user(email: &str) -> serde_json::Value {
         "socket": "mock-socket",
         "total_plays": 0,
         "total_uploads": 0,
+        "total_videos": 0,
         "id": 1,
         "user_name": email,
         "email": email,
@@ -93,11 +94,17 @@ fn authenticated_user(email: &str) -> serde_json::Value {
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-fn unauthenticated_user(socket: &str, total_plays: u32, total_uploads: u32) -> serde_json::Value {
+fn unauthenticated_user(
+    socket: &str,
+    total_plays: u32,
+    total_uploads: u32,
+    total_videos: u32,
+) -> serde_json::Value {
     json!({
         "socket": socket,
         "total_plays": total_plays,
-        "total_uploads": total_uploads
+        "total_uploads": total_uploads,
+        "total_videos": total_videos
     })
 }
 
@@ -884,7 +891,7 @@ async fn unauthenticated_client_refreshes_basic_user_data() {
         .and(path("/api/v1/me"))
         .and(NoCookieHeader)
         .respond_with(
-            ResponseTemplate::new(200).set_body_json(unauthenticated_user("anonymous", 12, 3)),
+            ResponseTemplate::new(200).set_body_json(unauthenticated_user("anonymous", 12, 4, 3)),
         )
         .expect(1)
         .mount(&mock_server)
@@ -894,7 +901,8 @@ async fn unauthenticated_client_refreshes_basic_user_data() {
     let expected_user = models::UnauthenticatedUser {
         socket: "anonymous".to_string(),
         total_plays: 12,
-        total_uploads: 3,
+        total_uploads: 4,
+        total_videos: 3,
     };
     {
         let user = client
@@ -926,7 +934,8 @@ async fn authenticated_client_refreshes_full_user_data() {
 
     let mut refreshed_user = authenticated_user(email);
     refreshed_user["total_plays"] = json!(42);
-    refreshed_user["total_uploads"] = json!(7);
+    refreshed_user["total_uploads"] = json!(8);
+    refreshed_user["total_videos"] = json!(7);
     refreshed_user["bio"] = json!("refreshed");
     Mock::given(method("GET"))
         .and(path("/api/v1/me"))
@@ -946,8 +955,10 @@ async fn authenticated_client_refreshes_full_user_data() {
         .await
         .expect("authenticated user refresh should succeed");
 
-    assert_eq!(user.unauthenticated.total_plays, 42);
-    assert_eq!(user.unauthenticated.total_uploads, 7);
+    assert_eq!(user.total_plays, 42);
+    assert_eq!(user.total_uploads, 8);
+    assert_eq!(user.total_videos, 7);
+    assert_eq!(user.unauthenticated.total_videos, 7);
     assert_eq!(user.bio, "refreshed");
     assert_eq!(client.user().bio, "refreshed");
 }

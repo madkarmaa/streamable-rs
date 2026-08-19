@@ -469,9 +469,9 @@ impl ApiRequest for SetVideoLabelsRequest {
 ///
 /// ```
 /// let user = streamable::models::UnauthenticatedUser {
-///     socket: "socket-id".into(), total_plays: 10, total_uploads: 2,
+///     socket: "socket-id".into(), total_plays: 10, total_uploads: 3, total_videos: 2,
 /// };
-/// assert_eq!(user.total_uploads, 2);
+/// assert_eq!(user.total_videos, 2);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnauthenticatedUser {
@@ -481,13 +481,15 @@ pub struct UnauthenticatedUser {
     pub total_plays: u32,
     /// Visible upload count.
     pub total_uploads: u32,
+    /// Visible video count.
+    pub total_videos: u32,
 }
 
 /// Data for a signed-in user.
 ///
 /// ```no_run
 /// fn show(user: &streamable::models::AuthenticatedUser) {
-///     println!("{} ({})", user.user_name, user.email);
+///     println!("{} has {} videos", user.user_name, user.total_videos);
 /// }
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -520,6 +522,14 @@ pub struct AuthenticatedUser {
 
     /// Current account privacy settings.
     pub privacy_settings: PrivacySettings,
+}
+
+impl std::ops::Deref for AuthenticatedUser {
+    type Target = UnauthenticatedUser;
+
+    fn deref(&self) -> &Self::Target {
+        &self.unauthenticated
+    }
 }
 
 /// Who can see a video.
