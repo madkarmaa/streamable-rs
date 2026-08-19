@@ -2,10 +2,11 @@ use super::*;
 use crate::{StreamableError, utils::*};
 
 use serde_json::json;
+use std::sync::Arc;
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 use wiremock::matchers::{body_bytes, body_json, header, query_param};
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-use wiremock::{Match, Request, Respond};
+use wiremock::{Match, Request};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
@@ -58,19 +59,6 @@ async fn remote_authenticated_client()
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 struct NoCookieHeader;
-
-#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-struct CancelUploadOnRequest {
-    cancellation: UploadCancellationToken,
-}
-
-#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
-impl Respond for CancelUploadOnRequest {
-    fn respond(&self, _request: &Request) -> ResponseTemplate {
-        self.cancellation.cancel();
-        ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(5))
-    }
-}
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 impl Match for NoCookieHeader {
@@ -496,10 +484,9 @@ async fn video_upload_defaults_title_to_file_stem() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
+async fn video_upload_s3_failure_cancels_initialized_upload() {
     let mock_server = MockServer::start().await;
     let video_path = media_path("webm.webm");
-    let cancellation = UploadCancellationToken::new();
     let video_size = std::fs::metadata(&video_path)
         .expect("video fixture should exist")
         .len();
@@ -517,9 +504,7 @@ async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
         .await;
     Mock::given(method("PUT"))
         .and(path("/upload/mock"))
-        .respond_with(CancelUploadOnRequest {
-            cancellation: cancellation.clone(),
-        })
+        .respond_with(ResponseTemplate::new(500))
         .expect(1)
         .mount(&mock_server)
         .await;
@@ -531,17 +516,19 @@ async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
         .await;
 
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
-    let error = client
-        .upload_video_with_cancellation(video_path, None, cancellation.clone())
+    let upload = client
+        .begin_video_upload(video_path, None)
         .await
-        .expect_err("cancelled upload should stop before transcoding");
+        .expect("upload should initialize");
+    assert_eq!(upload.shortcode(), "mock");
+    let error = upload
+        .complete()
+        .await
+        .expect_err("S3 failure should stop before transcoding");
 
-    assert!(cancellation.is_cancelled());
     assert!(matches!(
         error,
-        StreamableError::UploadCancelled {
-            shortcode: Some(ref shortcode)
-        } if shortcode == "mock"
+        StreamableError::HttpStatus { status: 500, .. }
     ));
     let requests = mock_server
         .received_requests()
@@ -567,25 +554,66 @@ async fn video_upload_cancellation_aborts_s3_and_notifies_streamable() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn pre_cancelled_video_upload_makes_no_request() {
+async fn initialized_upload_handle_cancels_without_transferring_file() {
     let mock_server = MockServer::start().await;
-    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
-    let cancellation = UploadCancellationToken::new();
-    cancellation.cancel();
-    let error = client
-        .upload_video_with_cancellation(media_path("webm.webm"), None, cancellation)
-        .await
-        .expect_err("pre-cancelled upload should not start");
+    let video_path = media_path("webm.webm");
+    let video_size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/initialize"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/mock/cancel"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
 
-    assert!(matches!(
-        error,
-        StreamableError::UploadCancelled { shortcode: None }
-    ));
+    let client = mock_upload_client(&mock_server).expect("mock client should initialize");
+    let upload = client
+        .begin_video_upload(video_path, None)
+        .await
+        .expect("upload should initialize");
+    let handle = upload.handle();
+    assert_eq!(handle.shortcode(), "mock");
+    let cancel = handle.clone();
+    drop(handle);
+    drop(upload);
+    cancel
+        .cancel()
+        .await
+        .expect("explicit cancellation should succeed");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.url.path()))
+            .collect::<Vec<_>>(),
+        [
+            ("GET", "/api/v1/uploads/shortcode"),
+            ("POST", "/api/v1/videos/mock/initialize"),
+            ("POST", "/api/v1/videos/mock/cancel"),
+        ]
+    );
     assert!(
-        mock_server
-            .received_requests()
-            .await
-            .expect("mock server should record requests")
+        requests
+            .last()
+            .expect("cancel request should be recorded")
+            .body
             .is_empty()
     );
 }

@@ -30,18 +30,20 @@ client.set_video_labels("abc123", &[label.id]).await?;
 # Ok(()) }
 ```
 
-Cancel an upload with a shared token:
+Manage an initialized upload explicitly when the application needs cancellation:
 
 ```no_run
-use streamable::{Result, StreamableClient, UploadCancellationToken};
+use streamable::{Result, StreamableClient};
 
+# async fn shutdown() {}
 # async fn run() -> Result<()> {
 let client = StreamableClient::new()?;
-let token = UploadCancellationToken::new();
-let cancel = token.clone();
-let upload = client.upload_video_with_cancellation("video.mp4", None, token);
-cancel.cancel();
-let _ = upload.await;
+let upload = client.begin_video_upload("video.mp4", None).await?;
+let handle = upload.handle();
+tokio::select! {
+    result = upload.complete() => { result?; }
+    () = shutdown() => { handle.cancel().await?; }
+}
 # Ok(()) }
 ```
 
@@ -53,6 +55,6 @@ runtime through `StreamableClient::with_transport`. Custom transports implement
 `transport::HttpTransport` and receive runtime-neutral `http`/`bytes` request and response types;
 file uploads arrive as `Body::File(PathBuf)` for transport-owned streaming.
 
-Cookies, response status mapping, JSON encoding, and upload cancellation remain client-owned, so
-wire behavior does not change with transport choice. After shortcode allocation, every upload
-failure or cancellation attempts Streamable's `/cancel` rollback endpoint.
+Applications cancel the `VideoUpload::complete` future with their runtime and call
+`VideoUploadHandle::cancel` for Streamable cleanup. Library-detected initialization, S3, and
+transcoding failures attempt cleanup automatically.

@@ -12,14 +12,8 @@ use http::{
     header::{CONTENT_TYPE, COOKIE},
 };
 use std::{
-    future::{Future, poll_fn},
-    path::Path,
-    pin::pin,
-    sync::{
-        Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, Ordering},
-    },
-    task::{Poll, Waker},
+    path::{Path, PathBuf},
+    sync::{Mutex, MutexGuard},
 };
 use url::Url;
 
@@ -80,122 +74,10 @@ pub type UnauthenticatedStreamableClient<T = DefaultTransport> =
 /// ```
 pub type AuthenticatedStreamableClient<T = DefaultTransport> = StreamableClient<Authenticated, T>;
 
-/// A shared upload stop signal.
-///
-/// ```
-/// use streamable::UploadCancellationToken;
-///
-/// let token = UploadCancellationToken::new();
-/// let other_task = token.clone();
-/// other_task.cancel();
-/// assert!(token.is_cancelled());
-/// ```
-#[derive(Clone, Debug)]
-pub struct UploadCancellationToken {
-    inner: Arc<UploadCancellationState>,
-}
-
-#[derive(Debug)]
-struct UploadCancellationState {
-    cancelled: AtomicBool,
-    wakers: Mutex<Vec<Waker>>,
-}
-
-impl UploadCancellationToken {
-    /// Creates a token that has not been cancelled.
-    ///
-    /// ```
-    /// use streamable::UploadCancellationToken;
-    ///
-    /// let token = UploadCancellationToken::new();
-    /// assert!(!token.is_cancelled());
-    /// ```
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            inner: Arc::new(UploadCancellationState {
-                cancelled: AtomicBool::new(false),
-                wakers: Mutex::new(Vec::new()),
-            }),
-        }
-    }
-
-    /// Cancels this token and every clone of it.
-    ///
-    /// ```
-    /// use streamable::UploadCancellationToken;
-    ///
-    /// let token = UploadCancellationToken::new();
-    /// let clone = token.clone();
-    /// clone.cancel();
-    /// assert!(token.is_cancelled());
-    /// ```
-    pub fn cancel(&self) {
-        if !self.inner.cancelled.swap(true, Ordering::AcqRel) {
-            let wakers = {
-                let mut wakers = lock_unpoisoned(&self.inner.wakers);
-                std::mem::take(&mut *wakers)
-            };
-            for waker in wakers {
-                waker.wake();
-            }
-        }
-    }
-
-    #[must_use]
-    /// Returns `true` after this token or one of its clones is cancelled.
-    ///
-    /// ```
-    /// use streamable::UploadCancellationToken;
-    ///
-    /// let token = UploadCancellationToken::new();
-    /// assert!(!token.is_cancelled());
-    /// token.cancel();
-    /// assert!(token.is_cancelled());
-    /// ```
-    pub fn is_cancelled(&self) -> bool {
-        self.inner.cancelled.load(Ordering::Acquire)
-    }
-
-    async fn run<F>(&self, future: F) -> std::result::Result<F::Output, ()>
-    where
-        F: Future,
-    {
-        let mut future = pin!(future);
-        poll_fn(|context| {
-            if self.is_cancelled() {
-                return Poll::Ready(Err(()));
-            }
-            if let Poll::Ready(output) = future.as_mut().poll(context) {
-                return Poll::Ready(Ok(output));
-            }
-
-            let mut wakers = lock_unpoisoned(&self.inner.wakers);
-            if !wakers.iter().any(|waker| waker.will_wake(context.waker())) {
-                wakers.push(context.waker().clone());
-            }
-            drop(wakers);
-
-            if self.is_cancelled() {
-                Poll::Ready(Err(()))
-            } else {
-                Poll::Pending
-            }
-        })
-        .await
-    }
-}
-
 fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-impl Default for UploadCancellationToken {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 #[derive(Debug)]
@@ -243,6 +125,100 @@ pub struct StreamableClient<State = Unauthenticated, T = DefaultTransport> {
     cookies: Mutex<CookieStore>,
     endpoint_routing: EndpointRouting,
     state: State,
+}
+
+/// An initialized Streamable upload awaiting file transfer and transcoding.
+///
+/// Create one with [`StreamableClient::begin_video_upload`]. Call [`Self::complete`] for normal
+/// completion or [`Self::cancel`] for explicit cleanup.
+pub struct VideoUpload<'a, State = Unauthenticated, T = DefaultTransport> {
+    client: &'a StreamableClient<State, T>,
+    upload_info: models::UploadInfo,
+    video_file: PathBuf,
+    size: u64,
+}
+
+impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
+    /// Returns the allocated Streamable shortcode.
+    #[must_use]
+    pub fn shortcode(&self) -> &str {
+        &self.upload_info.shortcode
+    }
+
+    /// Creates an independent handle for cancelling this upload.
+    #[must_use]
+    pub fn handle(&self) -> VideoUploadHandle<'a, State, T> {
+        VideoUploadHandle {
+            client: self.client,
+            shortcode: self.upload_info.shortcode.clone(),
+        }
+    }
+
+    /// Streams the file to S3 and asks Streamable to transcode it.
+    ///
+    /// # Errors
+    ///
+    /// Returns the upload failure after attempting `/cancel`. If cleanup also fails,
+    /// [`StreamableError::UploadRollback`] preserves both errors.
+    pub async fn complete(self) -> Result<models::Video> {
+        let shortcode = self.upload_info.shortcode.clone();
+        let result = async {
+            self.client
+                .upload_video_file_to_s3(&self.upload_info, self.size, &self.video_file)
+                .await?;
+            self.client
+                .transcode_video_after_upload(&self.upload_info)
+                .await
+        }
+        .await;
+
+        self.client
+            .finish_upload_or_rollback(&shortcode, result)
+            .await
+    }
+
+    /// Cancels this initialized upload on Streamable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the cancellation request.
+    pub async fn cancel(self) -> Result<()> {
+        self.client
+            .cancel_video_upload(&self.upload_info.shortcode)
+            .await
+    }
+}
+
+/// Lightweight cancellation handle for an initialized [`VideoUpload`].
+pub struct VideoUploadHandle<'a, State = Unauthenticated, T = DefaultTransport> {
+    client: &'a StreamableClient<State, T>,
+    shortcode: String,
+}
+
+impl<State, T> Clone for VideoUploadHandle<'_, State, T> {
+    fn clone(&self) -> Self {
+        Self {
+            client: self.client,
+            shortcode: self.shortcode.clone(),
+        }
+    }
+}
+
+impl<State: Sync, T: HttpTransport> VideoUploadHandle<'_, State, T> {
+    /// Returns the allocated Streamable shortcode.
+    #[must_use]
+    pub fn shortcode(&self) -> &str {
+        &self.shortcode
+    }
+
+    /// Cancels the initialized upload on Streamable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the cancellation request.
+    pub async fn cancel(&self) -> Result<()> {
+        self.client.cancel_video_upload(&self.shortcode).await
+    }
 }
 
 #[cfg(feature = "reqwest")]
@@ -731,32 +707,32 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         video_file: impl AsRef<Path>,
         title: Option<String>,
     ) -> Result<models::Video> {
-        self.upload_video_with_cancellation(video_file, title, UploadCancellationToken::new())
+        self.begin_video_upload(video_file, title)
+            .await?
+            .complete()
             .await
     }
 
-    /// Uploads a video that an [`UploadCancellationToken`] can stop.
+    /// Allocates and initializes a video upload without transferring the file.
     ///
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {
-    /// use streamable::{StreamableClient, UploadCancellationToken};
-    /// let client = StreamableClient::new()?;
-    /// let token = UploadCancellationToken::new();
-    /// token.cancel();
-    /// let result = client.upload_video_with_cancellation("video.mp4", None, token).await;
+    /// let client = streamable::StreamableClient::new()?;
+    /// let upload = client.begin_video_upload("video.mp4", None).await?;
+    /// println!("allocated {}", upload.shortcode());
+    /// upload.cancel().await?;
     /// # Ok(()) }
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns [`StreamableError::UploadCancelled`] after successful cancellation, or another
-    /// request, file, signing, or response error when that operation fails.
-    pub async fn upload_video_with_cancellation(
+    /// Returns an error when the path is invalid, shortcode allocation fails, or Streamable
+    /// rejects initialization. An initialization failure attempts `/cancel` automatically.
+    pub async fn begin_video_upload(
         &self,
         video_file: impl AsRef<Path>,
         title: Option<String>,
-        cancellation: UploadCancellationToken,
-    ) -> Result<models::Video> {
+    ) -> Result<VideoUpload<'_, State, T>> {
         let video_file = std::fs::canonicalize(video_file.as_ref())?;
         let metadata = std::fs::metadata(&video_file)?;
 
@@ -784,32 +760,19 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         )?;
 
         let size = metadata.len();
+        let upload_info = self.generate_shortcode(size).await?;
+        let shortcode = upload_info.shortcode.clone();
+        let result = self
+            .initialize_video_upload(&upload_info, size, original_name, title)
+            .await;
+        self.finish_upload_or_rollback(&shortcode, result).await?;
 
-        let upload_info = self.generate_shortcode(size, &cancellation).await?;
-        let result = async {
-            self.initialize_video_upload(&upload_info, size, original_name, title, &cancellation)
-                .await?;
-            self.upload_video_file_to_s3(&upload_info, size, &video_file, &cancellation)
-                .await?;
-            self.transcode_video_after_upload(&upload_info, &cancellation)
-                .await
-        }
-        .await;
-
-        match result {
-            Ok(video) => Ok(video),
-            Err(error) => {
-                let shortcode = upload_info.shortcode;
-                match self.cancel_video_upload(&shortcode).await {
-                    Ok(()) => Err(error),
-                    Err(rollback) => Err(StreamableError::UploadRollback {
-                        shortcode,
-                        source: Box::new(error),
-                        rollback: Box::new(rollback),
-                    }),
-                }
-            }
-        }
+        Ok(VideoUpload {
+            client: self,
+            upload_info,
+            video_file,
+            size,
+        })
     }
 
     /// Cancels an upload by its shortcode.
@@ -829,16 +792,8 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .await
     }
 
-    async fn generate_shortcode(
-        &self,
-        size: u64,
-        cancellation: &UploadCancellationToken,
-    ) -> Result<models::UploadInfo> {
-        let request = models::ShortcodeRequest::new(size);
-        match cancellation.run(self.execute(&request)).await {
-            Ok(result) => result,
-            Err(()) => Err(StreamableError::UploadCancelled { shortcode: None }),
-        }
+    async fn generate_shortcode(&self, size: u64) -> Result<models::UploadInfo> {
+        self.execute(&models::ShortcodeRequest::new(size)).await
     }
 
     async fn initialize_video_upload(
@@ -847,17 +802,14 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         size: u64,
         original_name: String,
         title: String,
-        cancellation: &UploadCancellationToken,
     ) -> Result<()> {
-        let shortcode = &upload_info.shortcode;
-        let request =
-            models::InitializeVideoUploadRequest::new(shortcode, size, original_name, title);
-        match cancellation.run(self.execute(&request)).await {
-            Ok(result) => result,
-            Err(()) => Err(StreamableError::UploadCancelled {
-                shortcode: Some(shortcode.clone()),
-            }),
-        }
+        self.execute(&models::InitializeVideoUploadRequest::new(
+            &upload_info.shortcode,
+            size,
+            original_name,
+            title,
+        ))
+        .await
     }
 
     async fn upload_video_file_to_s3(
@@ -865,7 +817,6 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         upload_info: &models::UploadInfo,
         size: u64,
         video_file: &Path,
-        cancellation: &UploadCancellationToken,
     ) -> Result<()> {
         let signed_put = self
             .endpoint_routing
@@ -885,34 +836,33 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             headers: signed_put.headers,
             body: Body::File(video_file.to_owned()),
         };
-        let upload = async {
-            let response = self
-                .transport
-                .execute(request)
-                .await
-                .map_err(StreamableError::transport)?;
-            ApiResponse::new(response.status, endpoint, response.body).into_empty()
-        };
-
-        match cancellation.run(upload).await {
-            Ok(result) => result,
-            Err(()) => Err(StreamableError::UploadCancelled {
-                shortcode: Some(upload_info.shortcode.clone()),
-            }),
-        }
+        let response = self
+            .transport
+            .execute(request)
+            .await
+            .map_err(StreamableError::transport)?;
+        ApiResponse::new(response.status, endpoint, response.body).into_empty()
     }
 
     async fn transcode_video_after_upload(
         &self,
         upload_info: &models::UploadInfo,
-        cancellation: &UploadCancellationToken,
     ) -> Result<models::Video> {
-        let request = models::TranscodeVideoRequest::new(upload_info);
-        match cancellation.run(self.execute(&request)).await {
-            Ok(result) => result,
-            Err(()) => Err(StreamableError::UploadCancelled {
-                shortcode: Some(upload_info.shortcode.clone()),
-            }),
+        self.execute(&models::TranscodeVideoRequest::new(upload_info))
+            .await
+    }
+
+    async fn finish_upload_or_rollback<U>(&self, shortcode: &str, result: Result<U>) -> Result<U> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => match self.cancel_video_upload(shortcode).await {
+                Ok(()) => Err(error),
+                Err(rollback) => Err(StreamableError::UploadRollback {
+                    shortcode: shortcode.to_string(),
+                    source: Box::new(error),
+                    rollback: Box::new(rollback),
+                }),
+            },
         }
     }
 

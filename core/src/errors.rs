@@ -5,8 +5,8 @@ use thiserror::Error;
 ///
 /// ```
 /// use streamable::StreamableError;
-/// let error = StreamableError::UploadCancelled { shortcode: None };
-/// assert_eq!(error.to_string(), "video upload was cancelled");
+/// let error = StreamableError::InvalidSession { message: "expired".into() };
+/// assert_eq!(error.to_string(), "expired");
 /// ```
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -131,13 +131,6 @@ pub enum StreamableError {
     UploadSigning {
         /// Error message.
         message: String,
-    },
-
-    /// The upload was cancelled.
-    #[error("video upload was cancelled")]
-    UploadCancelled {
-        /// Video shortcode, if one was assigned.
-        shortcode: Option<String>,
     },
 
     /// An allocated upload failed and Streamable also rejected its cleanup request.
