@@ -1456,3 +1456,48 @@ The S3 `Signature` result exposes `signed_headers` and `credential_scope` only
 under `cfg(test)`. Production consumes both while constructing `authorization`
 and needs to retain only that final header; deterministic parity tests retain
 the intermediate strings for direct assertions.
+
+## Runtime-neutral transport migration (2026-08-19)
+
+The earlier note that native reqwest and Tokio define the core runtime contract
+is superseded. `core/src/transport/` now owns runtime-neutral `Request`,
+`Response`, `Body`, and `HttpTransport` types. `Body::File(PathBuf)` delegates
+large-file streaming to each transport. The default `reqwest` feature supplies
+`ReqwestTransport`; `--no-default-features` removes reqwest and Tokio from normal
+core dependencies, and callers construct clients with `StreamableClient::with_transport`.
+
+`StreamableClient<State, T>` preserves its transport through authentication and
+logout typestate changes. The client, not reqwest, owns `cookie_store::CookieStore`,
+adds request cookies, and consumes every `Set-Cookie` response header. Protocol
+models use `http::Method`, `http::HeaderMap`, and runtime-neutral bodies; no model
+uses `reqwest::RequestBuilder`. `ApiResponse` maps non-success responses from its
+`http::StatusCode` rather than retaining `reqwest::Error`.
+
+Upload cancellation uses a standard-library atomic flag and waker list rather
+than `tokio::sync::Notify` or `tokio::select!`. Path canonicalization and metadata
+checks use `std::fs`; file contents remain transport-streamed. Once shortcode
+allocation succeeds, every later failure or cancellation attempts one bodyless
+`POST /api/v1/videos/<shortcode>/cancel`. If both upload and rollback fail,
+`StreamableError::UploadRollback` preserves both errors.
+
+## Explicit upload lifecycle (2026-08-19)
+
+The cancellation-token note above is superseded. The core no longer defines
+`UploadCancellationToken`, `upload_video_with_cancellation`, or a custom wake-up
+primitive. Applications cancel the `VideoUpload::complete` future using their
+runtime and use Streamable's explicit cleanup operation through a retained
+`VideoUploadHandle`.
+
+`StreamableClient::begin_video_upload` validates the file, allocates a shortcode,
+and completes `/initialize`, then returns `VideoUpload`. `VideoUpload::complete`
+streams the file to S3 and requests transcoding. `VideoUpload::cancel` consumes
+an initialized upload for explicit cleanup; `VideoUpload::handle` returns a
+clonable handle containing the client reference and shortcode so cleanup remains
+available while another task owns the completion future. `upload_video` remains
+the convenience path and delegates to `begin_video_upload().complete()`.
+
+Library-detected failures after shortcode allocation still attempt one bodyless
+`POST /api/v1/videos/<shortcode>/cancel`; a cleanup failure returns
+`StreamableError::UploadRollback` with both causes. Dropping an in-flight
+completion future cannot perform async cleanup, so the caller must retain and
+invoke the handle when runtime-level cancellation wins.
