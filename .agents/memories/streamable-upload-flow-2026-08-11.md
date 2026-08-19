@@ -1473,6 +1473,10 @@ models use `http::Method`, `http::HeaderMap`, and runtime-neutral bodies; no mod
 uses `reqwest::RequestBuilder`. `ApiResponse` maps non-success responses from its
 `http::StatusCode` rather than retaining `reqwest::Error`.
 
+`StreamableClient::logout` is infallible: it consumes the authenticated client,
+preserves the existing transport and endpoint routing, clears cookies, and
+returns `UnauthenticatedStreamableClient<T>` directly.
+
 `core/src/client/mod.rs` keeps request-specific URL resolution, serialization,
 and response decoding in `StreamableClient::execute<Req>`. The async transport
 pipeline lives in module-level `send_request<T>`, which is generic only over the
@@ -1517,8 +1521,9 @@ completion future cannot perform async cleanup, so the caller must retain and
 invoke the handle when runtime-level cancellation wins.
 
 The pre-commit hook runs `cargo check -p streamable-rs --no-default-features`
-before workspace tests and Clippy whenever Rust files are staged. This keeps the
-runtime-neutral core configuration continuously build-checked.
+before workspace tests and Clippy whenever Rust files, any Cargo manifest, or
+`Cargo.lock` are staged. This keeps the runtime-neutral core configuration
+continuously build-checked, including dependency-only commits.
 
 ## Shared user totals (2026-08-19)
 
