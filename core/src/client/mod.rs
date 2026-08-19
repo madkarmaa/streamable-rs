@@ -603,23 +603,18 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     /// Returns a new signed-out client.
     ///
     /// ```no_run
-    /// fn logout(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
-    ///     let client = client.logout()?;
+    /// fn logout(client: streamable::AuthenticatedStreamableClient) {
+    ///     let client = client.logout();
     ///     assert!(!client.is_authenticated());
-    ///     Ok(())
     /// }
     /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the replacement HTTP client cannot be built.
-    pub fn logout(self) -> Result<UnauthenticatedStreamableClient<T>> {
-        Ok(StreamableClient {
+    pub fn logout(self) -> UnauthenticatedStreamableClient<T> {
+        StreamableClient {
             transport: self.transport,
             cookies: Mutex::new(CookieStore::default()),
             endpoint_routing: self.endpoint_routing,
             state: Unauthenticated { user: None },
-        })
+        }
     }
 
     async fn execute_and_update_user<Req>(

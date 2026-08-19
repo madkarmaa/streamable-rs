@@ -526,7 +526,7 @@ async fn video_upload_s3_failure_cancels_initialized_upload() {
     let upload = client
         .begin_video_upload(video_path, None)
         .await
-        .expect("upload should initialize");
+        .expect("upload should allocate a shortcode");
     assert_eq!(upload.shortcode(), "mock");
     let error = upload
         .complete()
@@ -1062,7 +1062,7 @@ async fn test_successful_registration_and_login() {
     assert_eq!(registered_client.user().email, email);
     assert!(registered_client.is_authenticated());
 
-    let login_client = registered_client.logout().expect("logout should succeed");
+    let login_client = registered_client.logout();
 
     assert!(!login_client.is_authenticated());
 
