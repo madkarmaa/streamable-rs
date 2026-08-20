@@ -1556,6 +1556,8 @@ where domain error text could include response data or local paths. The local
 logging test captures a login lifecycle and asserts request metadata is present
 while email/password payload values are absent.
 
-The opt-in `test-tracing` feature installs a test-writer subscriber before each
-test binary runs. `cargo test -p streamable-rs` stays quiet; add `--features
-test-tracing -- --nocapture` to run the same full offline suite with debug events.
+Test-only `ctor` and `tracing-subscriber` dev-dependencies install a test-writer
+subscriber under `cfg(test)` when `STREAMABLE_TEST_TRACING` is present. Normal
+production dependency resolution contains neither crate. `cargo test -p
+streamable-rs` stays quiet; set the variable and add `-- --no-capture` to run the
+same full offline unit suite with debug events.
