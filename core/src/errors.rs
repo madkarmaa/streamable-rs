@@ -200,6 +200,34 @@ pub enum StreamableError {
 pub type Result<T> = std::result::Result<T, StreamableError>;
 
 impl StreamableError {
+    pub(crate) const fn kind(&self) -> &'static str {
+        match self {
+            Self::EmailAlreadyInUse { .. } => "email_already_in_use",
+            Self::InvalidCredentials { .. } => "invalid_credentials",
+            Self::InvalidSession { .. } => "invalid_session",
+            Self::PasswordValidation { .. } => "password_validation",
+            Self::LabelAlreadyExists { .. } => "label_already_exists",
+            Self::LabelNotFound { .. } => "label_not_found",
+            Self::VideoLabelAssignmentFailed { .. } => "video_label_assignment_failed",
+            Self::VideoPrivacyUpdateFailed { .. } => "video_privacy_update_failed",
+            Self::VideoPrivacyResetFailed { .. } => "video_privacy_reset_failed",
+            Self::VideoAnalyticsFailed { .. } => "video_analytics_failed",
+            Self::VideoLiveViewsFailed { .. } => "video_live_views_failed",
+            Self::RateLimitExceeded { .. } => "rate_limit_exceeded",
+            Self::InvalidVideoFile { .. } => "invalid_video_file",
+            Self::UploadSigning { .. } => "upload_signing",
+            Self::UploadRollback { .. } => "upload_rollback",
+            Self::UnexpectedVideoDeletionResponse { .. } => "unexpected_video_deletion_response",
+            Self::Io(_) => "io",
+            Self::Transport { .. } => "transport",
+            Self::HttpStatus { .. } => "http_status",
+            Self::RequestEncode(_) => "request_encode",
+            Self::InvalidHeader(_) => "invalid_header",
+            Self::ResponseDecode(_) => "response_decode",
+            Self::UrlParse(_) => "url_parse",
+        }
+    }
+
     pub(crate) fn transport(error: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self::Transport {
             source: Box::new(error),

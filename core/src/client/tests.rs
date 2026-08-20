@@ -294,6 +294,78 @@ impl HttpTransport for RecordingTransport {
     }
 }
 
+#[derive(Clone, Default)]
+struct CapturedLogs {
+    bytes: Arc<Mutex<Vec<u8>>>,
+}
+
+struct CapturedLogWriter {
+    bytes: Arc<Mutex<Vec<u8>>>,
+}
+
+impl std::io::Write for CapturedLogWriter {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        lock_unpoisoned(&self.bytes).extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for CapturedLogs {
+    type Writer = CapturedLogWriter;
+
+    fn make_writer(&'writer self) -> Self::Writer {
+        CapturedLogWriter {
+            bytes: Arc::clone(&self.bytes),
+        }
+    }
+}
+
+impl CapturedLogs {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&lock_unpoisoned(&self.bytes)).into_owned()
+    }
+}
+
+#[test]
+fn debug_tracing_reports_request_lifecycle_without_sensitive_payloads() {
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_target(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(logs.clone())
+        .finish();
+    let email = "private-email@example.test";
+    let password = "private-password";
+
+    tracing::subscriber::with_default(subscriber, || {
+        tokio_test::block_on(async {
+            let client = StreamableClient::with_transport(RecordingTransport::default());
+            let result = client.login(email.to_string(), password.to_string()).await;
+            assert!(
+                result.is_err(),
+                "fixture response should not decode as a user"
+            );
+        });
+    });
+
+    let logs = logs.text();
+    assert!(logs.contains("streamable::models::LoginRequest"));
+    assert!(logs.contains("http.method=POST"));
+    assert!(logs.contains("request.body.kind=\"bytes\""));
+    assert!(logs.contains("prepared API request"));
+    assert!(logs.contains("received API response"));
+    assert!(logs.contains("error.kind=\"response_decode\""));
+    assert!(!logs.contains(email));
+    assert!(!logs.contains(password));
+    assert!(!logs.contains("username"));
+}
+
 #[tokio::test]
 async fn test_api_client_initialization() {
     let client = StreamableClient::new().expect("client should initialize");

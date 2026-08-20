@@ -45,7 +45,13 @@ pub fn generate_random_username() -> String {
         .choose(&mut rng)
         .map_or("gmail.com", |domain| *domain);
 
-    format!("{local_part}@{domain}")
+    let username = format!("{local_part}@{domain}");
+    tracing::debug!(
+        credential.kind = "username",
+        credential.length = username.len(),
+        "generated random credential"
+    );
+    username
 }
 
 /// Generates an 8-20 character password with letters and numbers.
@@ -68,7 +74,13 @@ pub fn generate_random_password() -> String {
     password.extend((password.len()..length).map(|_| random_char(&mut rng, &allowed)));
     password.shuffle(&mut rng);
 
-    password.into_iter().map(char::from).collect()
+    let password = password.into_iter().map(char::from).collect::<String>();
+    tracing::debug!(
+        credential.kind = "password",
+        credential.length = password.len(),
+        "generated random credential"
+    );
+    password
 }
 
 /// Checks file contents for a supported video format.
@@ -82,11 +94,13 @@ pub fn generate_random_password() -> String {
 /// ```
 #[must_use]
 pub fn is_video_file(path: &Path) -> bool {
-    path.is_file()
+    let recognized = path.is_file()
         && FileFormat::from_file(path).is_ok_and(|format| {
             matches!(format.kind(), Kind::Video) || format == FileFormat::SmallWebFormat
         })
-        || is_raw_hevc(path)
+        || is_raw_hevc(path);
+    tracing::debug!(recognized, "inspected candidate video file");
+    recognized
 }
 
 fn is_raw_hevc(path: &Path) -> bool {

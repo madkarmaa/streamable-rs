@@ -78,17 +78,42 @@ impl ApiResponse {
     /// # Errors
     ///
     /// Returns an HTTP or JSON error.
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            http.status = self.status.as_u16(),
+            url = %self.endpoint,
+            response.body.length = self.body.len(),
+            response.type = std::any::type_name::<T>(),
+        ),
+        err(level = "debug")
+    )]
     pub fn json<T>(self) -> Result<T>
     where
         T: DeserializeOwned,
     {
         self.ensure_success()?;
 
-        Ok(serde_json::from_slice(&self.body)?)
+        let decoded = serde_json::from_slice(&self.body)?;
+        tracing::debug!("decoded JSON response");
+        Ok(decoded)
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            http.status = self.status.as_u16(),
+            url = %self.endpoint,
+            response.body.length = self.body.len(),
+        ),
+        err(level = "debug")
+    )]
     pub(crate) fn into_empty(self) -> Result<()> {
-        self.ensure_success()
+        self.ensure_success()?;
+        tracing::debug!("accepted empty response");
+        Ok(())
     }
 
     pub(crate) fn api_error(&self) -> Option<crate::models::ErrorResponse> {
