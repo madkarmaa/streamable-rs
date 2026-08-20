@@ -13,8 +13,7 @@ Repository layout:
 
 These steps are mandatory before normal project work:
 
-1. **Read the `caveman` skill first.** Locate the project-local `caveman` skill under `.agents/skills/` and read its instructions before inspecting, editing, testing, or committing project code.
-2. **Ensure the repository dump exists.** If the repository-root `dump/` directory is missing, run the repository-root `dump.py` before proceeding. Do not regenerate `dump/` merely because it exists unless the current task requires it.
+1. **Ensure the repository dump exists.** If the repository-root `dump/` directory is missing, run the repository-root `dump.py` before proceeding. Do not regenerate `dump/` merely because it exists unless the current task requires it.
 
 ---
 

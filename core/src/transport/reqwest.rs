@@ -24,16 +24,30 @@ impl ReqwestTransport {
     /// # Errors
     ///
     /// Returns an error when reqwest cannot build its client.
+    #[tracing::instrument(level = "debug", err(level = "debug"))]
     pub fn new() -> Result<Self, ReqwestTransportError> {
-        Ok(Self {
+        let transport = Self {
             client: reqwest::Client::builder().build()?,
-        })
+        };
+        tracing::debug!("created reqwest transport");
+        Ok(transport)
     }
 }
 
 impl HttpTransport for ReqwestTransport {
     type Error = ReqwestTransportError;
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(
+            http.method = %request.method,
+            url = %request.url,
+            request.body.kind = request.body.kind(),
+            request.body.length = request.body.in_memory_len(),
+        ),
+        err(level = "debug")
+    )]
     async fn execute(&self, request: Request) -> Result<Response, Self::Error> {
         let mut builder = self
             .client
@@ -53,6 +67,12 @@ impl HttpTransport for ReqwestTransport {
         let status = response.status();
         let headers = response.headers().clone();
         let body = response.bytes().await?;
+
+        tracing::debug!(
+            http.status = status.as_u16(),
+            response.body.length = body.len(),
+            "received HTTP response"
+        );
 
         Ok(Response {
             status,

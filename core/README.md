@@ -58,3 +58,14 @@ file uploads arrive as `Body::File(PathBuf)` for transport-owned streaming.
 Applications cancel the `VideoUpload::complete` future with their runtime and call
 `VideoUploadHandle::cancel` for Streamable cleanup. Library-detected initialization, S3, and
 transcoding failures attempt cleanup automatically.
+
+## Debug logging
+
+The library emits structured `tracing` debug events without logging sensitive values.
+
+Run the full offline suite normally or with console tracing:
+
+```sh
+cargo test -p streamable-rs
+STREAMABLE_TEST_TRACING=1 cargo test -p streamable-rs -- --no-capture
+```

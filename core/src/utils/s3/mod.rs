@@ -63,6 +63,21 @@ pub enum S3Error {
     },
 }
 
+impl S3Error {
+    pub(crate) const fn kind(&self) -> &'static str {
+        match self {
+            Self::InvalidSigningKey(_) => "invalid_signing_key",
+            Self::InvalidCredential { .. } => "invalid_credential",
+            Self::TimestampFormatting(_) => "timestamp_formatting",
+            Self::InvalidUrl(_) => "invalid_url",
+            Self::MissingUrlHost => "missing_url_host",
+            Self::InvalidHeaderValue { .. } => "invalid_header_value",
+            Self::MissingSigningHeader { .. } => "missing_signing_header",
+            Self::NonAsciiSigningHeader { .. } => "non_ascii_signing_header",
+        }
+    }
+}
+
 type Result<T> = std::result::Result<T, S3Error>;
 
 /// Complete HTTP request components for a Streamable S3 upload.
@@ -278,6 +293,11 @@ fn insert_header(headers: &mut HeaderMap, name: HeaderName, value: &str) -> Resu
 ///
 /// Returns [`S3Error`] when Streamable's upload fields cannot be converted into a valid signed
 /// request.
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(upload.bytes = content_length)
+)]
 pub fn build_s3_put(upload_info: &UploadInfo, content_length: u64) -> Result<SignedS3Put> {
     let timestamp = OffsetDateTime::now_utc()
         .format(format_description!(
@@ -288,6 +308,11 @@ pub fn build_s3_put(upload_info: &UploadInfo, content_length: u64) -> Result<Sig
     build_s3_put_at(upload_info, content_length, &timestamp)
 }
 
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(upload.bytes = content_length)
+)]
 pub fn build_s3_put_for_base_url(
     upload_info: &UploadInfo,
     content_length: u64,
@@ -358,6 +383,12 @@ fn build_s3_put_at_url(
     insert_header(&mut headers, AUTHORIZATION, &signature.authorization)?;
     insert_header(&mut headers, CONTENT_TYPE, "application/octet-stream")?;
     insert_header(&mut headers, CONTENT_LENGTH, &content_length.to_string())?;
+
+    tracing::debug!(
+        aws.region = credential_scope.region,
+        http.request.header_count = headers.len(),
+        "built signed object storage request"
+    );
 
     Ok(SignedS3Put { url, headers })
 }

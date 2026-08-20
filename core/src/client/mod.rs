@@ -80,6 +80,16 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(
+        http.method = %method,
+        url = %endpoint_url,
+        request.body.kind = body.kind(),
+        request.body.length = body.in_memory_len(),
+    )
+)]
 async fn send_request<T: HttpTransport>(
     transport: &T,
     cookies: &Mutex<CookieStore>,
@@ -88,7 +98,9 @@ async fn send_request<T: HttpTransport>(
     mut headers: HeaderMap,
     body: Body,
 ) -> Result<ApiResponse> {
-    if let Some(cookie) = cookie_header(cookies, &endpoint_url)? {
+    let cookie = cookie_header(cookies, &endpoint_url)?;
+    tracing::debug!(cookie.attached = cookie.is_some(), "prepared API request");
+    if let Some(cookie) = cookie {
         headers.insert(COOKIE, cookie);
     }
     if matches!(body, Body::Bytes(_)) && !headers.contains_key(CONTENT_TYPE) {
@@ -104,6 +116,12 @@ async fn send_request<T: HttpTransport>(
         .execute(request)
         .await
         .map_err(StreamableError::transport)?;
+
+    tracing::debug!(
+        http.status = response.status.as_u16(),
+        response.body.length = response.body.len(),
+        "received API response"
+    );
 
     store_response_cookies(cookies, &endpoint_url, &response.headers);
     Ok(ApiResponse::new(
@@ -135,10 +153,15 @@ fn store_response_cookies(cookies: &Mutex<CookieStore>, url: &Url, headers: &Hea
         .filter_map(|value| value.to_str().ok())
         .map(str::to_owned)
         .collect::<Vec<_>>();
+    let received = response_cookies.len();
     let mut store = lock_unpoisoned(cookies);
-    for cookie in response_cookies {
-        let _ = store.parse(&cookie, url);
-    }
+    let stored = response_cookies
+        .into_iter()
+        .filter(|cookie| store.parse(cookie, url).is_ok())
+        .count();
+    drop(store);
+
+    tracing::debug!(received, stored, "processed response cookies");
 }
 
 #[derive(Debug)]
@@ -224,6 +247,11 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
     ///
     /// Returns the upload failure after attempting `/cancel`. If cleanup also fails,
     /// [`StreamableError::UploadRollback`] preserves both errors.
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(shortcode = %self.upload_info.shortcode, upload.bytes = self.size)
+    )]
     pub async fn complete(self) -> Result<models::Video> {
         let Self {
             client,
@@ -234,6 +262,7 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
             title,
         } = self;
         let shortcode = upload_info.shortcode.clone();
+        tracing::debug!("starting allocated video upload");
         let result = async {
             client
                 .initialize_video_upload(&upload_info, size, original_name, title)
@@ -253,6 +282,11 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
     /// # Errors
     ///
     /// Returns an error when Streamable rejects the cancellation request.
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(shortcode = %self.upload_info.shortcode)
+    )]
     pub async fn cancel(self) -> Result<()> {
         self.client
             .cancel_video_upload(&self.upload_info.shortcode)
@@ -287,6 +321,11 @@ impl<State: Sync, T: HttpTransport> VideoUploadHandle<'_, State, T> {
     /// # Errors
     ///
     /// Returns an error when Streamable rejects the cancellation request.
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(shortcode = %self.shortcode)
+    )]
     pub async fn cancel(&self) -> Result<()> {
         self.client.cancel_video_upload(&self.shortcode).await
     }
@@ -332,6 +371,11 @@ impl<T> StreamableClient<Unauthenticated, T> {
     }
 
     fn with_transport_and_routing(transport: T, endpoint_routing: EndpointRouting) -> Self {
+        tracing::debug!(
+            transport.type = std::any::type_name::<T>(),
+            endpoint.overridden = endpoint_routing.override_url().is_some(),
+            "created Streamable client"
+        );
         Self {
             transport,
             cookies: Mutex::new(CookieStore::default()),
@@ -793,15 +837,29 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
     /// # Errors
     ///
     /// Returns an error when the path is invalid or shortcode allocation fails.
+    #[tracing::instrument(level = "debug", skip_all)]
     pub async fn begin_video_upload(
         &self,
         video_file: impl AsRef<Path>,
         title: Option<String>,
     ) -> Result<VideoUpload<'_, State, T>> {
-        let video_file = std::fs::canonicalize(video_file.as_ref())?;
-        let metadata = std::fs::metadata(&video_file)?;
+        let video_file = std::fs::canonicalize(video_file.as_ref()).inspect_err(|_| {
+            tracing::debug!(
+                error.kind = "io",
+                operation = "canonicalize",
+                "upload setup failed"
+            );
+        })?;
+        let metadata = std::fs::metadata(&video_file).inspect_err(|_| {
+            tracing::debug!(
+                error.kind = "io",
+                operation = "metadata",
+                "upload setup failed"
+            );
+        })?;
 
         if !utils::is_video_file(&video_file) {
+            tracing::debug!(error.kind = "invalid_video_file", "upload setup failed");
             return Err(StreamableError::InvalidVideoFile { path: video_file });
         }
 
@@ -825,6 +883,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         )?;
 
         let size = metadata.len();
+        tracing::debug!(upload.bytes = size, "validated video upload file");
         let upload_info = self.generate_shortcode(size).await?;
 
         Ok(VideoUpload {
@@ -874,6 +933,11 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         .await
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(shortcode = %upload_info.shortcode, upload.bytes = size)
+    )]
     async fn upload_video_file_to_s3(
         &self,
         upload_info: &models::UploadInfo,
@@ -887,8 +951,14 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
                 || utils::s3::build_s3_put(upload_info, size),
                 |base_url| utils::s3::build_s3_put_for_base_url(upload_info, size, base_url),
             )
-            .map_err(|error| StreamableError::UploadSigning {
-                message: error.to_string(),
+            .map_err(|error| {
+                tracing::debug!(
+                    error.kind = error.kind(),
+                    "object storage request signing failed"
+                );
+                StreamableError::UploadSigning {
+                    message: error.to_string(),
+                }
             })?;
 
         let endpoint = signed_put.url.clone();
@@ -898,11 +968,17 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             headers: signed_put.headers,
             body: Body::File(video_file.to_owned()),
         };
+        tracing::debug!(url = %endpoint, "uploading video file to object storage");
         let response = self
             .transport
             .execute(request)
             .await
             .map_err(StreamableError::transport)?;
+        tracing::debug!(
+            http.status = response.status.as_u16(),
+            response.body.length = response.body.len(),
+            "received object storage response"
+        );
         ApiResponse::new(response.status, endpoint, response.body).into_empty()
     }
 
@@ -914,35 +990,63 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .await
     }
 
+    #[tracing::instrument(level = "debug", skip_all, fields(shortcode))]
     async fn finish_upload_or_rollback<U>(&self, shortcode: &str, result: Result<U>) -> Result<U> {
         match result {
-            Ok(value) => Ok(value),
-            Err(error) => match self.cancel_video_upload(shortcode).await {
-                Ok(()) => Err(error),
-                Err(rollback) => Err(StreamableError::UploadRollback {
-                    shortcode: shortcode.to_string(),
-                    source: Box::new(error),
-                    rollback: Box::new(rollback),
-                }),
-            },
+            Ok(value) => {
+                tracing::debug!("completed video upload");
+                Ok(value)
+            }
+            Err(error) => {
+                tracing::debug!(
+                    error.kind = error.kind(),
+                    "video upload failed; cancelling allocation"
+                );
+                match self.cancel_video_upload(shortcode).await {
+                    Ok(()) => {
+                        tracing::debug!("cancelled failed video upload allocation");
+                        Err(error)
+                    }
+                    Err(rollback) => Err(StreamableError::UploadRollback {
+                        shortcode: shortcode.to_string(),
+                        source: Box::new(error),
+                        rollback: Box::new(rollback),
+                    }),
+                }
+            }
         }
     }
 
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(request.type = std::any::type_name::<Req>())
+    )]
     async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
     where
         Req: ApiRequest + Sync,
     {
-        let endpoint_url = self.endpoint_routing.resolve(req.url())?;
-        let response = send_request(
-            &self.transport,
-            &self.cookies,
-            req.method(),
-            endpoint_url,
-            req.headers(),
-            req.body()?,
-        )
-        .await?;
+        let result = async {
+            let endpoint_url = self.endpoint_routing.resolve(req.url())?;
+            let response = send_request(
+                &self.transport,
+                &self.cookies,
+                req.method(),
+                endpoint_url,
+                req.headers(),
+                req.body()?,
+            )
+            .await?;
 
-        req.decode_response(response)
+            req.decode_response(response)
+        }
+        .await;
+
+        match &result {
+            Ok(_) => tracing::debug!("completed API request"),
+            Err(error) => tracing::debug!(error.kind = error.kind(), "API request failed"),
+        }
+
+        result
     }
 }

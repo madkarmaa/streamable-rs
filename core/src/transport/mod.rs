@@ -37,6 +37,23 @@ pub enum Body {
     File(PathBuf),
 }
 
+impl Body {
+    pub(crate) const fn kind(&self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Bytes(_) => "bytes",
+            Self::File(_) => "file",
+        }
+    }
+
+    pub(crate) const fn in_memory_len(&self) -> Option<usize> {
+        match self {
+            Self::Bytes(bytes) => Some(bytes.len()),
+            Self::Empty | Self::File(_) => None,
+        }
+    }
+}
+
 /// Complete runtime-neutral HTTP request.
 #[derive(Debug)]
 pub struct Request {
