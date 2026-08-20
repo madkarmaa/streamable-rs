@@ -6,7 +6,7 @@ mod constants;
 
 #[cfg(test)]
 mod test_tracing {
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn install_subscriber() {
         if std::env::var_os("STREAMABLE_TEST_TRACING").is_some() {
             initialize_subscriber();

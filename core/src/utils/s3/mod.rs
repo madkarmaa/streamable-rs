@@ -1,5 +1,5 @@
 use crate::models::UploadInfo;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use http::{
     HeaderMap, Method,
     header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, HOST, HeaderName, HeaderValue},
