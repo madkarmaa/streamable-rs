@@ -933,7 +933,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         self.execute(&models::GetVideoRequest::new(shortcode)).await
     }
 
-    /// Deletes a video.
+    /// Deletes a video. Works without signing in.
     ///
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {
@@ -951,7 +951,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .await
     }
 
-    /// Uploads a video. The file name is the default title.
+    /// Uploads a video. Works without signing in; the file name is the default title.
     ///
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {
@@ -975,7 +975,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .await
     }
 
-    /// Allocates a video upload without initializing or transferring the file.
+    /// Allocates a video upload without transferring the file. Works without signing in.
     ///
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {
@@ -1048,7 +1048,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         })
     }
 
-    /// Cancels an upload by its shortcode.
+    /// Cancels an upload by its shortcode. Works without signing in.
     ///
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {

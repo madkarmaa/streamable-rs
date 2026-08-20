@@ -1,8 +1,18 @@
 # `streamable`
 
-Unofficial Rust client for Streamable's undocumented API.
+Unofficial async Rust client for Streamable's undocumented API.
 
-Video methods work without signing in:
+## API coverage
+
+- Videos: upload, fetch, delete, privacy, analytics, and live views.
+- Collections: create, list, fetch, update, and delete.
+- Accounts: register, sign in, refresh, change password, and set defaults.
+- Labels: create, rename, delete, and assign to videos.
+
+Video and collection operations work without signing in. Account and label operations require a
+signed-in client.
+
+## Usage
 
 ```no_run
 use streamable::{models::VideoPrivacySettingsUpdate, Result, StreamableClient};
@@ -30,7 +40,7 @@ client.set_video_labels("abc123", &[label.id]).await?;
 # Ok(()) }
 ```
 
-Manage an allocated upload explicitly when the application needs cancellation:
+Use an upload handle to cancel an in-progress upload and clean up its Streamable allocation:
 
 ```no_run
 use streamable::{Result, StreamableClient};
@@ -47,25 +57,24 @@ tokio::select! {
 # Ok(()) }
 ```
 
-## HTTP runtime
+## HTTP transport
 
-Default `reqwest` feature provides `ReqwestTransport`, preserving `StreamableClient::new()`.
-Disable default features to remove reqwest and Tokio from normal dependencies, then provide any
-runtime through `StreamableClient::with_transport`. Custom transports implement
-`transport::HttpTransport` and receive runtime-neutral `http`/`bytes` request and response types;
-file uploads arrive as `Body::File(PathBuf)` for transport-owned streaming.
+The default `reqwest` feature provides `StreamableClient::new()` and streams file uploads with
+Tokio. Without default features, use `StreamableClient::with_transport` and implement
+`transport::HttpTransport`. File uploads use `transport::Body::File`.
 
-Applications cancel the `VideoUpload::complete` future with their runtime and call
-`VideoUploadHandle::cancel` for Streamable cleanup. Library-detected initialization, S3, and
-transcoding failures attempt cleanup automatically.
+## Testing and tracing
 
-## Debug logging
-
-The library emits structured `tracing` debug events without logging sensitive values.
-
-Run the full offline suite normally or with console tracing:
+Normal tests are offline. Set `STREAMABLE_TEST_TRACING=1` to print structured request lifecycle
+metadata; credentials and request bodies are omitted.
 
 ```sh
 cargo test -p streamable-rs
 STREAMABLE_TEST_TRACING=1 cargo test -p streamable-rs -- --no-capture
+```
+
+The remote suite is explicit and may mutate Streamable:
+
+```sh
+cargo test --workspace --features DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER
 ```
