@@ -3,6 +3,19 @@
 
 mod client;
 mod constants;
+
+#[cfg(feature = "test-tracing")]
+mod test_tracing {
+    #[ctor::ctor]
+    fn install_subscriber() {
+        let _ = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::DEBUG)
+            .with_test_writer()
+            .try_init();
+    }
+}
+
 /// Errors returned by the client.
 ///
 /// ```
@@ -11,6 +24,7 @@ mod constants;
 /// assert!(result.is_err());
 /// ```
 pub mod errors;
+
 /// Data sent to and returned by Streamable.
 ///
 /// ```
@@ -22,6 +36,7 @@ pub mod errors;
 /// };
 /// ```
 pub mod models;
+
 /// Raw API response access for custom decoders.
 ///
 /// ```no_run
@@ -29,8 +44,10 @@ pub mod models;
 /// fn status(response: &ApiResponse) { println!("{}", response.status()); }
 /// ```
 pub mod response;
+
 /// Runtime-neutral HTTP transport contract and default reqwest adapter.
 pub mod transport;
+
 /// Small helpers used by the client.
 ///
 /// ```
