@@ -68,6 +68,16 @@ impl Match for NoCookieHeader {
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+struct NoQuery;
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+impl Match for NoQuery {
+    fn matches(&self, request: &Request) -> bool {
+        request.url.query().is_none()
+    }
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 fn authenticated_user(email: &str) -> serde_json::Value {
     json!({
         "socket": "mock-socket",
@@ -1685,6 +1695,740 @@ async fn remote_label_lifecycle() {
     assert_eq!(created.name, name);
     assert_eq!(renamed.id, created.id);
     assert_eq!(renamed.name, renamed_name);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn collection_creation_works_without_a_session() {
+    let mock_server = MockServer::start().await;
+    let shortcodes = vec!["first".to_string(), "second".to_string()];
+    Mock::given(method("POST"))
+        .and(path("/api/v1/collections"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_json(json!({
+            "shortcodes": ["first", "second"],
+            "title": "Highlights"
+        })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": "Highlights",
+            "videos": [
+                { "shortcode": "first", "title": "First", "plays": 0 },
+                { "shortcode": "second", "title": "Second", "plays": 0 }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    let created = client
+        .create_collection(&shortcodes, Some("Highlights"))
+        .await
+        .expect("anonymous collection creation should succeed");
+
+    assert_eq!(created.shortcode, "shared1");
+    assert_eq!(created.title.as_deref(), Some("Highlights"));
+    assert_eq!(created.videos[0].shortcode, "first");
+    assert_eq!(created.videos[1].shortcode, "second");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn anonymous_collection_lifecycle_uses_exact_wire_contracts() {
+    let mock_server = MockServer::start().await;
+    let shortcodes = vec!["first".to_string(), "second".to_string()];
+    let reversed = vec!["second".to_string(), "first".to_string()];
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/collections"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_json(json!({ "shortcodes": ["first", "second"] })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": null,
+            "videos": [
+                { "shortcode": "first", "title": "First", "plays": 0 },
+                { "shortcode": "second", "title": "Second", "plays": 0 }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections/count"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_bytes(Vec::<u8>::new()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "count": 1 })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections"))
+        .and(NoQuery)
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_bytes(Vec::<u8>::new()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "collections": [{
+                "shortcode": "shared1",
+                "title": null,
+                "created_at": "2026-08-13T10:00:00Z",
+                "updated_at": "2026-08-13T10:00:00Z",
+                "thumbnail_url": "https://cdn.example/thumbnail.jpg"
+            }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_bytes(Vec::<u8>::new()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": null,
+            "is_owner": true,
+            "white_label": false,
+            "show_streamable_brand": true,
+            "videos": [
+                {
+                    "shortcode": "first",
+                    "title": "First",
+                    "plays": 0,
+                    "date_added": "2026-08-13T10:00:00Z"
+                },
+                {
+                    "shortcode": "second",
+                    "title": "Second",
+                    "plays": 0,
+                    "date_added": "2026-08-13T10:01:00Z"
+                }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_json(json!({ "title": "Highlights" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": "Highlights",
+            "videos": [
+                { "shortcode": "first", "title": "First", "plays": 0 },
+                { "shortcode": "second", "title": "Second", "plays": 0 }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_json(json!({ "shortcodes": ["second", "first"] })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": "Highlights",
+            "videos": [
+                { "shortcode": "second", "title": "Second", "plays": 0 },
+                { "shortcode": "first", "title": "First", "plays": 0 }
+            ]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_bytes(Vec::<u8>::new()))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    let created = client
+        .create_collection(&shortcodes, None)
+        .await
+        .expect("collection creation should succeed");
+    let count = client
+        .count_collections()
+        .await
+        .expect("collection count should succeed");
+    let page = client
+        .list_collections(None, None)
+        .await
+        .expect("collection list should succeed");
+    let details = client
+        .get_collection("shared1")
+        .await
+        .expect("collection details should succeed");
+    let titled = client
+        .update_collection_title("shared1", "Highlights")
+        .await
+        .expect("collection title update should succeed");
+    let reordered = client
+        .replace_collection_videos("shared1", &reversed)
+        .await
+        .expect("collection membership replacement should succeed");
+    client
+        .delete_collection("shared1")
+        .await
+        .expect("collection deletion should accept an empty HTTP 200 body");
+
+    assert_eq!(created.videos[0].shortcode, "first");
+    assert_eq!(created.videos[1].shortcode, "second");
+    assert_eq!(count, 1);
+    assert_eq!(page.collections[0].shortcode, "shared1");
+    assert!(details.is_owner);
+    assert_eq!(details.videos[1].date_added, "2026-08-13T10:01:00Z");
+    assert_eq!(titled.title.as_deref(), Some("Highlights"));
+    assert_eq!(reordered.videos[0].shortcode, "second");
+    assert_eq!(reordered.videos[1].shortcode, "first");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn public_collection_details_work_without_a_session() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections/public1"))
+        .and(NoCookieHeader)
+        .and(header("content-type", "application/json"))
+        .and(header("pragma", "no-cache"))
+        .and(header("cache-control", "no-cache"))
+        .and(body_bytes(Vec::<u8>::new()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "shortcode": "public1",
+            "title": "Public collection",
+            "is_owner": false,
+            "white_label": false,
+            "show_streamable_brand": true,
+            "videos": []
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    let collection = client
+        .get_collection("public1")
+        .await
+        .expect("public collection should be readable");
+
+    assert!(!collection.is_owner);
+    assert_eq!(collection.title.as_deref(), Some("Public collection"));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn collection_operations_map_endpoint_and_common_errors() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/collections"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "message": "At least two videos are required"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections/count"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("count unavailable"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections"))
+        .and(query_param("page", "9"))
+        .and(query_param("count", "20"))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({
+            "message": "list unavailable"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections"))
+        .and(query_param("page", "10"))
+        .and(query_param("count", "20"))
+        .respond_with(ResponseTemplate::new(401).set_body_string("expired"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections/missing"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "statusCode": 404,
+            "error": "Not Found",
+            "message": "Not Found"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/collections/rejected"))
+        .respond_with(ResponseTemplate::new(502).set_body_string("fetch unavailable"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/collections/missing"))
+        .and(body_json(json!({ "title": "Title" })))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "statusCode": 404,
+            "error": "Not Found",
+            "message": "Not Found"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/collections/rejected"))
+        .and(body_json(json!({ "shortcodes": [] })))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+            "message": "membership rejected"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/collections/missing"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+            "statusCode": 404,
+            "error": "Not Found",
+            "message": "Not Found"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/collections/rejected"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("delete unavailable"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let one_shortcode = vec!["only".to_string()];
+
+    let creation = expect_streamable_error(
+        client.create_collection(&one_shortcode, None).await,
+        "rejected collection creation should fail",
+    );
+    let count = expect_streamable_error(
+        client.count_collections().await,
+        "rejected collection count should fail",
+    );
+    let list = expect_streamable_error(
+        client.list_collections(Some(9), Some(20)).await,
+        "rejected collection list should fail",
+    );
+    let expired = expect_streamable_error(
+        client.list_collections(Some(10), Some(20)).await,
+        "expired collection list should fail",
+    );
+    let missing_fetch = expect_streamable_error(
+        client.get_collection("missing").await,
+        "missing collection fetch should fail",
+    );
+    let rejected_fetch = expect_streamable_error(
+        client.get_collection("rejected").await,
+        "rejected collection fetch should fail",
+    );
+    let missing_update = expect_streamable_error(
+        client.update_collection_title("missing", "Title").await,
+        "missing collection update should fail",
+    );
+    let rejected_update = expect_streamable_error(
+        client.replace_collection_videos("rejected", &[]).await,
+        "rejected collection update should fail",
+    );
+    let missing_delete = expect_streamable_error(
+        client.delete_collection("missing").await,
+        "missing collection deletion should fail",
+    );
+    let rejected_delete = expect_streamable_error(
+        client.delete_collection("rejected").await,
+        "rejected collection deletion should fail",
+    );
+
+    assert!(matches!(
+        creation,
+        StreamableError::CollectionCreationFailed {
+            status: 400,
+            ref message
+        } if message == "At least two videos are required"
+    ));
+    assert!(matches!(
+        count,
+        StreamableError::CollectionCountFailed {
+            status: 500,
+            ref message
+        } if message == "count unavailable"
+    ));
+    assert!(matches!(
+        list,
+        StreamableError::CollectionListFailed {
+            status: 503,
+            ref message
+        } if message == "list unavailable"
+    ));
+    assert!(matches!(expired, StreamableError::InvalidSession { .. }));
+    assert!(matches!(
+        missing_fetch,
+        StreamableError::CollectionNotFound { ref shortcode } if shortcode == "missing"
+    ));
+    assert!(matches!(
+        rejected_fetch,
+        StreamableError::CollectionFetchFailed {
+            ref shortcode,
+            status: 502,
+            ref message
+        } if shortcode == "rejected" && message == "fetch unavailable"
+    ));
+    assert!(matches!(
+        missing_update,
+        StreamableError::CollectionNotFound { ref shortcode } if shortcode == "missing"
+    ));
+    assert!(matches!(
+        rejected_update,
+        StreamableError::CollectionUpdateFailed {
+            ref shortcode,
+            status: 422,
+            ref message
+        } if shortcode == "rejected" && message == "membership rejected"
+    ));
+    assert!(matches!(
+        missing_delete,
+        StreamableError::CollectionNotFound { ref shortcode } if shortcode == "missing"
+    ));
+    assert!(matches!(
+        rejected_delete,
+        StreamableError::CollectionDeletionFailed {
+            ref shortcode,
+            status: 500,
+            ref message
+        } if shortcode == "rejected" && message == "delete unavailable"
+    ));
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn remote_anonymous_collection_lifecycle() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = StreamableClient::new().expect("anonymous remote client should initialize");
+    assert!(!client.is_authenticated());
+    assert!(client.user().is_none());
+    let mut video_shortcodes = Vec::new();
+    let mut collection_shortcode = None;
+    let title = format!("anonymous-collection-{}", generate_random_password());
+
+    let exercise_result: std::result::Result<(), String> = async {
+        let initial_count = client
+            .count_collections()
+            .await
+            .map_err(|error| format!("initial anonymous collection count failed: {error}"))?;
+        client
+            .list_collections(None, None)
+            .await
+            .map_err(|error| format!("initial anonymous collection list failed: {error}"))?;
+
+        let first = client
+            .upload_video(media_path("webm.webm"), Some(format!("{title}-first")))
+            .await
+            .map_err(|error| format!("first anonymous video upload failed: {error}"))?;
+        video_shortcodes.push(first.shortcode);
+        let second = client
+            .upload_video(media_path("webm.webm"), Some(format!("{title}-second")))
+            .await
+            .map_err(|error| format!("second anonymous video upload failed: {error}"))?;
+        video_shortcodes.push(second.shortcode);
+
+        let created = client
+            .create_collection(&video_shortcodes, None)
+            .await
+            .map_err(|error| format!("anonymous collection creation failed: {error}"))?;
+        collection_shortcode = Some(created.shortcode.clone());
+
+        let count_after_create = client
+            .count_collections()
+            .await
+            .map_err(|error| format!("post-create anonymous collection count failed: {error}"))?;
+        if count_after_create != initial_count.saturating_add(1) {
+            return Err(format!(
+                "anonymous collection count did not increase from {initial_count} to {count_after_create}"
+            ));
+        }
+        let page = client
+            .list_collections(None, None)
+            .await
+            .map_err(|error| format!("post-create anonymous collection list failed: {error}"))?;
+        if !page
+            .collections
+            .iter()
+            .any(|collection| collection.shortcode == created.shortcode)
+        {
+            return Err("anonymous collection list omitted the created collection".to_string());
+        }
+
+        let titled = client
+            .update_collection_title(&created.shortcode, &title)
+            .await
+            .map_err(|error| format!("anonymous collection title update failed: {error}"))?;
+        if titled.title.as_deref() != Some(title.as_str()) {
+            return Err("anonymous collection title response changed the title".to_string());
+        }
+
+        let reversed = video_shortcodes.iter().rev().cloned().collect::<Vec<_>>();
+        let reordered = client
+            .replace_collection_videos(&created.shortcode, &reversed)
+            .await
+            .map_err(|error| format!("anonymous collection reorder failed: {error}"))?;
+        if reordered
+            .videos
+            .iter()
+            .map(|video| &video.shortcode)
+            .ne(reversed.iter())
+        {
+            return Err("anonymous collection update changed requested video order".to_string());
+        }
+
+        client
+            .delete_collection(&created.shortcode)
+            .await
+            .map_err(|error| format!("anonymous collection deletion failed: {error}"))?;
+        collection_shortcode = None;
+
+        let count_after_delete = client
+            .count_collections()
+            .await
+            .map_err(|error| format!("post-delete anonymous collection count failed: {error}"))?;
+        if count_after_delete != initial_count {
+            return Err(format!(
+                "anonymous collection count did not return from {count_after_create} to {initial_count}"
+            ));
+        }
+
+        Ok(())
+    }
+    .await;
+
+    let mut cleanup_errors = Vec::new();
+    if let Some(shortcode) = collection_shortcode
+        && let Err(error) = client.delete_collection(&shortcode).await
+    {
+        cleanup_errors.push(format!("anonymous collection cleanup failed: {error}"));
+    }
+    for shortcode in &video_shortcodes {
+        if let Err(error) = client.delete_video(shortcode).await {
+            cleanup_errors.push(format!(
+                "anonymous video cleanup for '{shortcode}' failed: {error}"
+            ));
+        }
+    }
+    assert!(!client.is_authenticated());
+    assert!(client.user().is_none());
+
+    assert!(
+        cleanup_errors.is_empty(),
+        "remote anonymous collection cleanup failed: {}",
+        cleanup_errors.join("; ")
+    );
+    assert!(
+        exercise_result.is_ok(),
+        "{}",
+        exercise_result
+            .err()
+            .as_deref()
+            .unwrap_or("remote anonymous collection lifecycle failed")
+    );
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = remote_authenticated_client().await;
+    let mut video_shortcodes = Vec::new();
+    let mut collection_shortcode = None;
+    let title = format!("collection-{}", generate_random_password());
+
+    let exercise_result: std::result::Result<(), String> = async {
+        let initial_count = client
+            .count_collections()
+            .await
+            .map_err(|error| format!("initial collection count failed: {error}"))?;
+        let first = client
+            .upload_video(media_path("webm.webm"), Some(format!("{title}-first")))
+            .await
+            .map_err(|error| format!("first remote video upload failed: {error}"))?;
+        video_shortcodes.push(first.shortcode);
+        let second = client
+            .upload_video(media_path("webm.webm"), Some(format!("{title}-second")))
+            .await
+            .map_err(|error| format!("second remote video upload failed: {error}"))?;
+        video_shortcodes.push(second.shortcode);
+
+        let created = client
+            .create_collection(&video_shortcodes, None)
+            .await
+            .map_err(|error| format!("remote collection creation failed: {error}"))?;
+        collection_shortcode = Some(created.shortcode.clone());
+        if created
+            .videos
+            .iter()
+            .map(|video| &video.shortcode)
+            .ne(video_shortcodes.iter())
+        {
+            return Err("remote collection creation changed video order".to_string());
+        }
+
+        let count_after_create = client
+            .count_collections()
+            .await
+            .map_err(|error| format!("post-create collection count failed: {error}"))?;
+        if count_after_create != initial_count.saturating_add(1) {
+            return Err(format!(
+                "collection count did not increase from {initial_count} to {count_after_create}"
+            ));
+        }
+        client
+            .list_collections(None, None)
+            .await
+            .map_err(|error| format!("remote collection list failed: {error}"))?;
+        let details = client
+            .get_collection(&created.shortcode)
+            .await
+            .map_err(|error| format!("remote collection detail failed: {error}"))?;
+        if !details.is_owner
+            || details
+                .videos
+                .iter()
+                .map(|video| &video.shortcode)
+                .ne(video_shortcodes.iter())
+        {
+            return Err("remote collection details changed ownership or video order".to_string());
+        }
+
+        let titled = client
+            .update_collection_title(&created.shortcode, &title)
+            .await
+            .map_err(|error| format!("remote collection title update failed: {error}"))?;
+        if titled.title.as_deref() != Some(title.as_str()) {
+            return Err("remote collection title response did not preserve the title".to_string());
+        }
+
+        let reversed = video_shortcodes.iter().rev().cloned().collect::<Vec<_>>();
+        let reordered = client
+            .replace_collection_videos(&created.shortcode, &reversed)
+            .await
+            .map_err(|error| format!("remote collection reorder failed: {error}"))?;
+        if reordered
+            .videos
+            .iter()
+            .map(|video| &video.shortcode)
+            .ne(reversed.iter())
+        {
+            return Err("remote collection update changed requested video order".to_string());
+        }
+
+        client
+            .delete_collection(&created.shortcode)
+            .await
+            .map_err(|error| format!("remote collection deletion failed: {error}"))?;
+        collection_shortcode = None;
+        let count_after_delete = client
+            .count_collections()
+            .await
+            .map_err(|error| format!("post-delete collection count failed: {error}"))?;
+        if count_after_delete != initial_count {
+            return Err(format!(
+                "collection count did not return from {count_after_create} to {initial_count}"
+            ));
+        }
+
+        match client.get_collection(&created.shortcode).await {
+            Err(StreamableError::CollectionNotFound { .. }) => {}
+            Err(error) => {
+                return Err(format!(
+                    "deleted remote collection returned the wrong error: {error}"
+                ));
+            }
+            Ok(_) => return Err("deleted remote collection remained readable".to_string()),
+        }
+        for shortcode in &video_shortcodes {
+            client
+                .get_video(shortcode)
+                .await
+                .map_err(|error| format!("collection deletion removed member video: {error}"))?;
+        }
+
+        Ok(())
+    }
+    .await;
+
+    let mut cleanup_errors = Vec::new();
+    if let Some(shortcode) = collection_shortcode
+        && let Err(error) = client.delete_collection(&shortcode).await
+    {
+        cleanup_errors.push(format!("collection cleanup failed: {error}"));
+    }
+    for shortcode in &video_shortcodes {
+        if let Err(error) = client.delete_video(shortcode).await {
+            cleanup_errors.push(format!("video cleanup for '{shortcode}' failed: {error}"));
+        }
+    }
+    drop(client);
+
+    assert!(
+        cleanup_errors.is_empty(),
+        "remote collection cleanup failed: {}",
+        cleanup_errors.join("; ")
+    );
+    let exercise_error = exercise_result.err();
+    assert!(
+        exercise_error.is_none(),
+        "{}",
+        exercise_error
+            .as_deref()
+            .unwrap_or("remote collection lifecycle failed")
+    );
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
