@@ -1,4 +1,5 @@
-STREAMABLE WEB UPLOAD FLOW
+# Streamable web upload flow
+
 Implementation status: **Implemented in `streamable-rs`.**
 Captured: 2026-08-11
 Source: Chrome DevTools Protocol network capture on https://streamable.com/
@@ -1457,37 +1458,6 @@ under `cfg(test)`. Production consumes both while constructing `authorization`
 and needs to retain only that final header; deterministic parity tests retain
 the intermediate strings for direct assertions.
 
-## Runtime-neutral transport migration (2026-08-19)
-
-The earlier note that native reqwest and Tokio define the core runtime contract
-is superseded. `core/src/transport/` now owns runtime-neutral `Request`,
-`Response`, `Body`, and `HttpTransport` types. `Body::File(PathBuf)` delegates
-large-file streaming to each transport. The default `reqwest` feature supplies
-`ReqwestTransport`; `--no-default-features` removes reqwest and Tokio from normal
-core dependencies, and callers construct clients with `StreamableClient::with_transport`.
-
-`StreamableClient<State, T>` preserves its transport through authentication and
-logout typestate changes. The client, not reqwest, owns `cookie_store::CookieStore`,
-adds request cookies, and consumes every `Set-Cookie` response header. Protocol
-models use `http::Method`, `http::HeaderMap`, and runtime-neutral bodies; no model
-uses `reqwest::RequestBuilder`. `ApiResponse` maps non-success responses from its
-`http::StatusCode` rather than retaining `reqwest::Error`.
-
-`StreamableClient::logout` is infallible: it consumes the authenticated client,
-preserves the existing transport and endpoint routing, clears cookies, and
-returns `UnauthenticatedStreamableClient<T>` directly.
-
-`core/src/client/mod.rs` keeps request-specific URL resolution, serialization,
-and response decoding in `StreamableClient::execute<Req>`. The async transport
-pipeline lives in module-level `send_request<T>`, which is generic only over the
-transport and owns cookies, default JSON content type, transport execution, and
-response-cookie storage. Keeping it independent of both request and client
-typestate avoids duplicating that state machine for every API request or auth
-state. For the five CLI request types measured with `cargo llvm-lines --release`,
-each `execute` closure fell from 521 to 297 LLVM IR lines and one 459-line shared
-`send_request` closure replaced the duplicated pipeline (2,605 to 1,944 lines,
-about 25% fewer across those functions).
-
 Upload cancellation uses a standard-library atomic flag and waker list rather
 than `tokio::sync::Notify` or `tokio::select!`. Path canonicalization and metadata
 checks use `std::fs`; file contents remain transport-streamed. Once shortcode
@@ -1519,45 +1489,3 @@ Library-detected failures after shortcode allocation still attempt one bodyless
 `StreamableError::UploadRollback` with both causes. Dropping an in-flight
 completion future cannot perform async cleanup, so the caller must retain and
 invoke the handle when runtime-level cancellation wins.
-
-The pre-commit hook runs `cargo check -p streamable-rs --no-default-features`
-before workspace tests and Clippy whenever Rust files, any Cargo manifest, or
-`Cargo.lock` are staged. This keeps the runtime-neutral core configuration
-continuously build-checked, including dependency-only commits.
-
-## Shared user totals (2026-08-19)
-
-`UnauthenticatedUser` owns the common `socket`, `total_plays`, `total_uploads`,
-and `total_videos` fields. `AuthenticatedUser` retains that value in its public
-`unauthenticated` field and implements `Deref<Target = UnauthenticatedUser>`.
-Authenticated callers can therefore use `client.user().total_videos` while both
-user model types and the explicit `user.unauthenticated` access path remain
-available. The API response exposes both `total_uploads` and `total_videos`; keep
-them as distinct fields rather than aliases.
-
-## Core debug tracing (2026-08-20)
-
-The core library depends directly on `tracing` and emits debug spans/events at
-the shared request pipeline, response decoder, default transport, video-file
-inspection, upload lifecycle, S3-signing, and rollback boundaries. The library
-does not install a global subscriber; applications retain subscriber and filter
-ownership.
-
-`StreamableClient::execute` identifies API operations by request model and logs
-success or a stable internal error kind. `send_request` records method, endpoint,
-body kind/length, cookie presence/counts, status, and response length. Keep these
-shared seams as the primary instrumentation points instead of duplicating every
-endpoint method.
-
-Debug instrumentation must not record raw bodies or header, cookie, password,
-generated-credential, or AWS credential values. Instrumented functions skip all
-arguments and opt in only selected fields; error events use stable variant kinds
-where domain error text could include response data or local paths. The local
-logging test captures a login lifecycle and asserts request metadata is present
-while email/password payload values are absent.
-
-Test-only `ctor` and `tracing-subscriber` dev-dependencies install a test-writer
-subscriber under `cfg(test)` when `STREAMABLE_TEST_TRACING` is present. Normal
-production dependency resolution contains neither crate. `cargo test -p
-streamable-rs` stays quiet; set the variable and add `-- --no-capture` to run the
-same full offline unit suite with debug events.
