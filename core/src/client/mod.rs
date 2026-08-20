@@ -685,6 +685,158 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
 }
 
 impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
+    /// Creates a collection with the videos in the given order. Works without signing in.
+    ///
+    /// `None` omits the optional title from the request.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let shortcodes = vec!["first".to_string(), "second".to_string()];
+    /// let collection = client.create_collection(&shortcodes, Some("Highlights")).await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the videos or title, the request fails, or the
+    /// response cannot be decoded.
+    pub async fn create_collection(
+        &self,
+        shortcodes: &[String],
+        title: Option<&str>,
+    ) -> Result<models::Collection> {
+        self.execute(&models::CreateCollectionRequest::new(shortcodes, title))
+            .await
+    }
+
+    /// Counts collections belonging to the current client session. Works without signing in.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// println!("{} collections", client.count_collections().await?);
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the request or the response cannot be decoded.
+    pub async fn count_collections(&self) -> Result<u64> {
+        self.execute(&models::CountCollectionsRequest).await
+    }
+
+    /// Lists collections belonging to the current client session. Works without signing in.
+    ///
+    /// `None` omits the corresponding query parameter. Passing `None` for both uses the service
+    /// defaults.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let page = client.list_collections(Some(1), Some(20)).await?;
+    /// println!("{} collections on this page", page.collections.len());
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the pagination or the response cannot be decoded.
+    pub async fn list_collections(
+        &self,
+        page: Option<u32>,
+        count: Option<u32>,
+    ) -> Result<models::CollectionPage> {
+        self.execute(&models::ListCollectionsRequest::new(page, count))
+            .await
+    }
+
+    /// Gets public collection details. An authenticated owner also receives owner fields.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let collection = client.get_collection("shared1").await?;
+    /// println!("{} videos", collection.videos.len());
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the collection does not exist, Streamable rejects the request, or the
+    /// response cannot be decoded.
+    pub async fn get_collection(&self, shortcode: &str) -> Result<models::CollectionDetails> {
+        self.execute(&models::GetCollectionRequest::new(shortcode))
+            .await
+    }
+
+    /// Replaces a collection title. Works without signing in.
+    ///
+    /// The collection's video membership is omitted and remains unchanged.
+    ///
+    /// ```no_run
+    /// # async fn run(client: streamable::UnauthenticatedStreamableClient) -> streamable::Result<()> {
+    /// client.update_collection_title("shared1", "Highlights").await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the collection does not exist, Streamable rejects the title, or the
+    /// response cannot be decoded.
+    pub async fn update_collection_title(
+        &self,
+        shortcode: &str,
+        title: &str,
+    ) -> Result<models::Collection> {
+        self.execute(&models::UpdateCollectionTitleRequest::new(shortcode, title))
+            .await
+    }
+
+    /// Replaces a collection's complete video membership in the given order. Works without
+    /// signing in.
+    ///
+    /// The collection title is omitted and remains unchanged. An empty slice sends an empty
+    /// replacement.
+    ///
+    /// ```no_run
+    /// # async fn run(client: streamable::UnauthenticatedStreamableClient) -> streamable::Result<()> {
+    /// let shortcodes = vec!["second".to_string(), "first".to_string()];
+    /// client.replace_collection_videos("shared1", &shortcodes).await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the collection does not exist, Streamable rejects the membership, or
+    /// the response cannot be decoded.
+    pub async fn replace_collection_videos(
+        &self,
+        shortcode: &str,
+        shortcodes: &[String],
+    ) -> Result<models::Collection> {
+        self.execute(&models::ReplaceCollectionVideosRequest::new(
+            shortcode, shortcodes,
+        ))
+        .await
+    }
+
+    /// Deletes a collection without deleting its member videos. Works without signing in.
+    ///
+    /// ```no_run
+    /// # async fn run(client: streamable::UnauthenticatedStreamableClient) -> streamable::Result<()> {
+    /// client.delete_collection("shared1").await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the collection does not exist or Streamable rejects the deletion.
+    pub async fn delete_collection(&self, shortcode: &str) -> Result<()> {
+        self.execute(&models::DeleteCollectionRequest::new(shortcode))
+            .await
+    }
+
     /// Gets a video's analytics summary. Works without signing in.
     ///
     /// ```no_run
