@@ -4,10 +4,14 @@
 mod client;
 mod constants;
 
-#[cfg(feature = "test-tracing")]
+#[cfg(test)]
 mod test_tracing {
     #[ctor::ctor]
     fn install_subscriber() {
+        if std::env::var_os("STREAMABLE_TEST_TRACING").is_none() {
+            return;
+        }
+
         let _ = tracing_subscriber::fmt()
             .with_ansi(false)
             .with_max_level(tracing::Level::DEBUG)

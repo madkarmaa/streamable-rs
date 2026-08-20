@@ -67,5 +67,5 @@ Run the full offline suite normally or with console tracing:
 
 ```sh
 cargo test -p streamable-rs
-cargo test -p streamable-rs --features test-tracing -- --nocapture
+STREAMABLE_TEST_TRACING=1 cargo test -p streamable-rs -- --no-capture
 ```
