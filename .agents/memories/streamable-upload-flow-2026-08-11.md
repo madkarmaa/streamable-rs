@@ -1555,3 +1555,7 @@ arguments and opt in only selected fields; error events use stable variant kinds
 where domain error text could include response data or local paths. The local
 logging test captures a login lifecycle and asserts request metadata is present
 while email/password payload values are absent.
+
+`debug_tracing_can_be_shown_in_console` installs a scoped test subscriber and
+uses the offline recording transport. Run it with `cargo test -p streamable-rs
+debug_tracing_can_be_shown_in_console -- --nocapture` to inspect emitted fields.
