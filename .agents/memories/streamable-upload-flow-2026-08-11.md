@@ -1534,3 +1534,24 @@ Authenticated callers can therefore use `client.user().total_videos` while both
 user model types and the explicit `user.unauthenticated` access path remain
 available. The API response exposes both `total_uploads` and `total_videos`; keep
 them as distinct fields rather than aliases.
+
+## Core debug tracing (2026-08-20)
+
+The core library depends directly on `tracing` and emits debug spans/events at
+the shared request pipeline, response decoder, default transport, video-file
+inspection, upload lifecycle, S3-signing, and rollback boundaries. The library
+does not install a global subscriber; applications retain subscriber and filter
+ownership.
+
+`StreamableClient::execute` identifies API operations by request model and logs
+success or a stable internal error kind. `send_request` records method, endpoint,
+body kind/length, cookie presence/counts, status, and response length. Keep these
+shared seams as the primary instrumentation points instead of duplicating every
+endpoint method.
+
+Debug instrumentation must not record raw bodies or header, cookie, password,
+generated-credential, or AWS credential values. Instrumented functions skip all
+arguments and opt in only selected fields; error events use stable variant kinds
+where domain error text could include response data or local paths. The local
+logging test captures a login lifecycle and asserts request metadata is present
+while email/password payload values are absent.
