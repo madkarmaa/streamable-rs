@@ -1,9 +1,116 @@
 use super::{
-    CancelVideoUploadRequest, ChangePasswordRequest, CreateLabelRequest, CreateUserRequest,
-    DomainRestrictions, InitializeVideoUploadRequest, PrivacySettingsRequest, RenameLabelRequest,
-    SetVideoLabelsRequest, TranscodeVideoRequest, UploadInfo, VideoAnalyticsSummary,
-    VideoPasswordUpdate, VideoPrivacySettingsUpdate, Visibility,
+    ApiRequest, COLLECTIONS_URL, CancelVideoUploadRequest, ChangePasswordRequest, Collection,
+    CollectionDetails, CollectionPage, CreateCollectionRequest, CreateLabelRequest,
+    CreateUserRequest, DomainRestrictions, InitializeVideoUploadRequest, ListCollectionsRequest,
+    PrivacySettingsRequest, RenameLabelRequest, ReplaceCollectionVideosRequest,
+    SetVideoLabelsRequest, TranscodeVideoRequest, UpdateCollectionTitleRequest, UploadInfo,
+    VideoAnalyticsSummary, VideoPasswordUpdate, VideoPrivacySettingsUpdate, Visibility,
 };
+
+#[test]
+fn collection_response_models_deserialize_distinct_wire_shapes() {
+    let collection: Collection = serde_json::from_value(serde_json::json!({
+        "shortcode": "shared1",
+        "title": null,
+        "videos": [{ "shortcode": "first", "title": "First", "plays": 0 }]
+    }))
+    .expect("collection snapshot should deserialize");
+    let page: CollectionPage = serde_json::from_value(serde_json::json!({
+        "collections": [{
+            "shortcode": "shared1",
+            "title": "Highlights",
+            "created_at": "2026-08-13T10:00:00Z",
+            "updated_at": "2026-08-13T11:00:00Z",
+            "thumbnail_url": "https://cdn.example/thumbnail.jpg"
+        }]
+    }))
+    .expect("collection page should deserialize");
+    let details: CollectionDetails = serde_json::from_value(serde_json::json!({
+        "shortcode": "shared1",
+        "title": "Highlights",
+        "is_owner": true,
+        "white_label": false,
+        "show_streamable_brand": true,
+        "videos": [{
+            "shortcode": "first",
+            "title": "First",
+            "plays": 3,
+            "date_added": "2026-08-13T10:00:00Z"
+        }]
+    }))
+    .expect("collection details should deserialize");
+
+    assert_eq!(collection.videos[0].shortcode, "first");
+    assert_eq!(
+        page.collections[0].thumbnail_url.as_deref(),
+        Some("https://cdn.example/thumbnail.jpg")
+    );
+    assert!(details.is_owner);
+    assert_eq!(details.videos[0].date_added, "2026-08-13T10:00:00Z");
+}
+
+#[test]
+fn create_collection_request_preserves_order_and_omits_absent_title() {
+    let shortcodes = vec!["second".to_string(), "first".to_string()];
+
+    assert_eq!(
+        serde_json::to_value(CreateCollectionRequest::new(&shortcodes, None))
+            .expect("collection create request should serialize"),
+        serde_json::json!({ "shortcodes": ["second", "first"] })
+    );
+    assert_eq!(
+        serde_json::to_value(CreateCollectionRequest::new(
+            &shortcodes,
+            Some("Highlights")
+        ))
+        .expect("titled collection create request should serialize"),
+        serde_json::json!({
+            "title": "Highlights",
+            "shortcodes": ["second", "first"]
+        })
+    );
+}
+
+#[test]
+fn collection_update_requests_keep_title_and_membership_disjoint() {
+    let shortcodes = vec!["second".to_string(), "first".to_string()];
+
+    assert_eq!(
+        serde_json::to_value(UpdateCollectionTitleRequest::new("shared1", "Highlights"))
+            .expect("collection title update should serialize"),
+        serde_json::json!({ "title": "Highlights" })
+    );
+    assert_eq!(
+        serde_json::to_value(ReplaceCollectionVideosRequest::new("shared1", &shortcodes))
+            .expect("collection membership replacement should serialize"),
+        serde_json::json!({ "shortcodes": ["second", "first"] })
+    );
+    assert_eq!(
+        serde_json::to_value(ReplaceCollectionVideosRequest::new("shared1", &[]))
+            .expect("empty collection membership replacement should serialize"),
+        serde_json::json!({ "shortcodes": [] })
+    );
+}
+
+#[test]
+fn collection_list_request_omits_absent_pagination() {
+    assert_eq!(
+        ListCollectionsRequest::new(None, None).url(),
+        COLLECTIONS_URL
+    );
+    assert_eq!(
+        ListCollectionsRequest::new(Some(2), None).url(),
+        format!("{COLLECTIONS_URL}?page=2")
+    );
+    assert_eq!(
+        ListCollectionsRequest::new(None, Some(50)).url(),
+        format!("{COLLECTIONS_URL}?count=50")
+    );
+    assert_eq!(
+        ListCollectionsRequest::new(Some(2), Some(50)).url(),
+        format!("{COLLECTIONS_URL}?page=2&count=50")
+    );
+}
 
 #[test]
 fn video_analytics_summary_deserializes_wire_fields() {

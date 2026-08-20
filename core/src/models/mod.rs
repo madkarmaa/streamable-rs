@@ -1,6 +1,6 @@
 use crate::constants::{
-    API_BASE_URL, CHANGE_PASSWORD_URL, LABELS_URL, LOGIN_URL, ME_URL, REGISTER_URL, SETTINGS_URL,
-    UPLOAD_SHORTCODE_URL,
+    API_BASE_URL, CHANGE_PASSWORD_URL, COLLECTIONS_COUNT_URL, COLLECTIONS_URL, LABELS_URL,
+    LOGIN_URL, ME_URL, REGISTER_URL, SETTINGS_URL, UPLOAD_SHORTCODE_URL,
 };
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
@@ -67,6 +67,77 @@ fn common_api_error(response: &ApiResponse) -> Option<StreamableError> {
     }
 
     None
+}
+
+fn api_error_message(response: &ApiResponse) -> String {
+    response
+        .api_error()
+        .map(|error| error.message)
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| response.text().into_owned())
+}
+
+fn collection_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(PRAGMA, HeaderValue::from_static("no-cache"));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+    headers
+}
+
+fn decode_collection_json<Response>(
+    response: ApiResponse,
+    shortcode: Option<&str>,
+    failure: impl FnOnce(u16, String) -> StreamableError,
+) -> StreamableResult<Response>
+where
+    Response: DeserializeOwned,
+{
+    if let Some(error) = common_api_error(&response) {
+        return Err(error);
+    }
+
+    if response.status() == StatusCode::NOT_FOUND
+        && let Some(shortcode) = shortcode
+    {
+        return Err(StreamableError::CollectionNotFound {
+            shortcode: shortcode.to_string(),
+        });
+    }
+
+    if !response.status().is_success() {
+        return Err(failure(
+            response.status().as_u16(),
+            api_error_message(&response),
+        ));
+    }
+
+    response.json()
+}
+
+fn decode_collection_empty(
+    response: ApiResponse,
+    shortcode: &str,
+    failure: impl FnOnce(u16, String) -> StreamableError,
+) -> StreamableResult<()> {
+    if let Some(error) = common_api_error(&response) {
+        return Err(error);
+    }
+
+    if response.status() == StatusCode::NOT_FOUND {
+        return Err(StreamableError::CollectionNotFound {
+            shortcode: shortcode.to_string(),
+        });
+    }
+
+    if !response.status().is_success() {
+        return Err(failure(
+            response.status().as_u16(),
+            api_error_message(&response),
+        ));
+    }
+
+    response.into_empty()
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -462,6 +533,433 @@ impl ApiRequest for SetVideoLabelsRequest {
         }
 
         response.into_empty()
+    }
+}
+
+/// Video summary returned by collection create and update operations.
+///
+/// ```
+/// let video = streamable::models::CollectionVideo {
+///     shortcode: "abc123".into(), title: "Demo".into(), plays: 7,
+/// };
+/// assert_eq!(video.plays, 7);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionVideo {
+    /// Video shortcode.
+    pub shortcode: String,
+    /// Video title.
+    pub title: String,
+    /// Video play count.
+    pub plays: u64,
+}
+
+/// Collection snapshot returned after creation or update.
+///
+/// ```
+/// let collection = streamable::models::Collection {
+///     shortcode: "shared1".into(), title: None, videos: Vec::new(),
+/// };
+/// assert!(collection.title.is_none());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Collection {
+    /// Public collection shortcode.
+    pub shortcode: String,
+    /// Optional collection title.
+    pub title: Option<String>,
+    /// Ordered video summaries.
+    pub videos: Vec<CollectionVideo>,
+}
+
+/// Collection summary returned by the paginated owner list.
+///
+/// ```
+/// let summary = streamable::models::CollectionSummary {
+///     shortcode: "shared1".into(),
+///     title: Some("Highlights".into()),
+///     created_at: "2026-08-13T10:00:00Z".into(),
+///     updated_at: "2026-08-13T10:00:00Z".into(),
+///     thumbnail_url: None,
+/// };
+/// assert_eq!(summary.title.as_deref(), Some("Highlights"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionSummary {
+    /// Public collection shortcode.
+    pub shortcode: String,
+    /// Optional collection title.
+    pub title: Option<String>,
+    /// Server-provided creation timestamp.
+    pub created_at: String,
+    /// Server-provided update timestamp.
+    pub updated_at: String,
+    /// Signed thumbnail URL, when one is available.
+    pub thumbnail_url: Option<String>,
+}
+
+/// One page of account-owned collection summaries.
+///
+/// The service does not include a total in this response. Use
+/// [`StreamableClient::count_collections`](crate::StreamableClient::count_collections) when a
+/// separate total is needed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionPage {
+    /// Collection summaries in service order.
+    pub collections: Vec<CollectionSummary>,
+}
+
+/// Video entry returned by a collection detail request.
+///
+/// ```
+/// let video = streamable::models::CollectionDetailVideo {
+///     shortcode: "abc123".into(), title: "Demo".into(), plays: 7,
+///     date_added: "2026-08-13T10:00:00Z".into(),
+/// };
+/// assert_eq!(video.shortcode, "abc123");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionDetailVideo {
+    /// Video shortcode.
+    pub shortcode: String,
+    /// Video title.
+    pub title: String,
+    /// Video play count.
+    pub plays: u64,
+    /// Server-provided collection membership timestamp.
+    pub date_added: String,
+}
+
+/// Public collection detail, including ownership and branding fields.
+///
+/// ```no_run
+/// fn show(collection: &streamable::models::CollectionDetails) {
+///     println!("{} has {} videos", collection.shortcode, collection.videos.len());
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CollectionDetails {
+    /// Public collection shortcode.
+    pub shortcode: String,
+    /// Optional collection title.
+    pub title: Option<String>,
+    /// Whether the current session owns this collection.
+    pub is_owner: bool,
+    /// Whether Streamable branding is white-labelled.
+    pub white_label: bool,
+    /// Whether Streamable branding should be displayed.
+    pub show_streamable_brand: bool,
+    /// Ordered detailed video entries.
+    pub videos: Vec<CollectionDetailVideo>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CreateCollectionRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    shortcodes: Vec<String>,
+}
+
+impl CreateCollectionRequest {
+    #[must_use]
+    pub(crate) fn new(shortcodes: &[String], title: Option<&str>) -> Self {
+        Self {
+            title: title.map(str::to_string),
+            shortcodes: shortcodes.to_vec(),
+        }
+    }
+}
+
+impl ApiRequest for CreateCollectionRequest {
+    type Response = Collection;
+
+    fn url(&self) -> &str {
+        COLLECTIONS_URL
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::POST
+    }
+
+    fn headers(&self) -> HeaderMap {
+        collection_headers()
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_collection_json(response, None, |status, message| {
+            StreamableError::CollectionCreationFailed { status, message }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CollectionCountResponse {
+    count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct CountCollectionsRequest;
+
+impl ApiRequest for CountCollectionsRequest {
+    type Response = u64;
+
+    fn url(&self) -> &str {
+        COLLECTIONS_COUNT_URL
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::GET
+    }
+
+    fn headers(&self) -> HeaderMap {
+        collection_headers()
+    }
+
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        let response: CollectionCountResponse =
+            decode_collection_json(response, None, |status, message| {
+                StreamableError::CollectionCountFailed { status, message }
+            })?;
+        Ok(response.count)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ListCollectionsRequest {
+    #[serde(skip)]
+    url: String,
+}
+
+impl ListCollectionsRequest {
+    #[must_use]
+    pub(crate) fn new(page: Option<u32>, count: Option<u32>) -> Self {
+        let url = match (page, count) {
+            (None, None) => COLLECTIONS_URL.to_string(),
+            (Some(page), None) => format!("{COLLECTIONS_URL}?page={page}"),
+            (None, Some(count)) => format!("{COLLECTIONS_URL}?count={count}"),
+            (Some(page), Some(count)) => {
+                format!("{COLLECTIONS_URL}?page={page}&count={count}")
+            }
+        };
+        Self { url }
+    }
+}
+
+impl ApiRequest for ListCollectionsRequest {
+    type Response = CollectionPage;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::GET
+    }
+
+    fn headers(&self) -> HeaderMap {
+        collection_headers()
+    }
+
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_collection_json(response, None, |status, message| {
+            StreamableError::CollectionListFailed { status, message }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct GetCollectionRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+}
+
+impl GetCollectionRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{COLLECTIONS_URL}/{shortcode}"),
+            shortcode: shortcode.to_string(),
+        }
+    }
+}
+
+impl ApiRequest for GetCollectionRequest {
+    type Response = CollectionDetails;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::GET
+    }
+
+    fn headers(&self) -> HeaderMap {
+        collection_headers()
+    }
+
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_collection_json(response, Some(&self.shortcode), |status, message| {
+            StreamableError::CollectionFetchFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct UpdateCollectionTitleRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+    title: String,
+}
+
+impl UpdateCollectionTitleRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str, title: &str) -> Self {
+        Self {
+            url: format!("{COLLECTIONS_URL}/{shortcode}"),
+            shortcode: shortcode.to_string(),
+            title: title.to_string(),
+        }
+    }
+}
+
+impl ApiRequest for UpdateCollectionTitleRequest {
+    type Response = Collection;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
+    }
+
+    fn headers(&self) -> HeaderMap {
+        collection_headers()
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_collection_json(response, Some(&self.shortcode), |status, message| {
+            StreamableError::CollectionUpdateFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ReplaceCollectionVideosRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+    shortcodes: Vec<String>,
+}
+
+impl ReplaceCollectionVideosRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str, shortcodes: &[String]) -> Self {
+        Self {
+            url: format!("{COLLECTIONS_URL}/{shortcode}"),
+            shortcode: shortcode.to_string(),
+            shortcodes: shortcodes.to_vec(),
+        }
+    }
+}
+
+impl ApiRequest for ReplaceCollectionVideosRequest {
+    type Response = Collection;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
+    }
+
+    fn headers(&self) -> HeaderMap {
+        collection_headers()
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_collection_json(response, Some(&self.shortcode), |status, message| {
+            StreamableError::CollectionUpdateFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            }
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct DeleteCollectionRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+}
+
+impl DeleteCollectionRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str) -> Self {
+        Self {
+            url: format!("{COLLECTIONS_URL}/{shortcode}"),
+            shortcode: shortcode.to_string(),
+        }
+    }
+}
+
+impl ApiRequest for DeleteCollectionRequest {
+    type Response = ();
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::DELETE
+    }
+
+    fn headers(&self) -> HeaderMap {
+        collection_headers()
+    }
+
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::Empty)
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_collection_empty(response, &self.shortcode, |status, message| {
+            StreamableError::CollectionDeletionFailed {
+                shortcode: self.shortcode.clone(),
+                status,
+                message,
+            }
+        })
     }
 }
 
