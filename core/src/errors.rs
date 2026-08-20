@@ -112,6 +112,73 @@ pub enum StreamableError {
         message: String,
     },
 
+    /// A collection does not exist.
+    #[error("Collection '{shortcode}' not found.")]
+    CollectionNotFound {
+        /// Missing collection shortcode.
+        shortcode: String,
+    },
+
+    /// Streamable rejected collection creation.
+    #[error("creating a collection failed with HTTP status {status}: {message}")]
+    CollectionCreationFailed {
+        /// Numeric HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
+    /// Streamable rejected a collection count request.
+    #[error("counting collections failed with HTTP status {status}: {message}")]
+    CollectionCountFailed {
+        /// Numeric HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
+    /// Streamable rejected a collection list request.
+    #[error("listing collections failed with HTTP status {status}: {message}")]
+    CollectionListFailed {
+        /// Numeric HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
+    /// Streamable rejected a collection detail request.
+    #[error("getting collection '{shortcode}' failed with HTTP status {status}: {message}")]
+    CollectionFetchFailed {
+        /// Collection shortcode.
+        shortcode: String,
+        /// Numeric HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
+    /// Streamable rejected a collection update.
+    #[error("updating collection '{shortcode}' failed with HTTP status {status}: {message}")]
+    CollectionUpdateFailed {
+        /// Collection shortcode.
+        shortcode: String,
+        /// Numeric HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
+    /// Streamable rejected collection deletion.
+    #[error("deleting collection '{shortcode}' failed with HTTP status {status}: {message}")]
+    CollectionDeletionFailed {
+        /// Collection shortcode.
+        shortcode: String,
+        /// Numeric HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
     /// Too many requests reached an endpoint.
     #[error("Rate limit exceeded for {endpoint}. Try again later.")]
     RateLimitExceeded {
@@ -213,6 +280,13 @@ impl StreamableError {
             Self::VideoPrivacyResetFailed { .. } => "video_privacy_reset_failed",
             Self::VideoAnalyticsFailed { .. } => "video_analytics_failed",
             Self::VideoLiveViewsFailed { .. } => "video_live_views_failed",
+            Self::CollectionNotFound { .. } => "collection_not_found",
+            Self::CollectionCreationFailed { .. } => "collection_creation_failed",
+            Self::CollectionCountFailed { .. } => "collection_count_failed",
+            Self::CollectionListFailed { .. } => "collection_list_failed",
+            Self::CollectionFetchFailed { .. } => "collection_fetch_failed",
+            Self::CollectionUpdateFailed { .. } => "collection_update_failed",
+            Self::CollectionDeletionFailed { .. } => "collection_deletion_failed",
             Self::RateLimitExceeded { .. } => "rate_limit_exceeded",
             Self::InvalidVideoFile { .. } => "invalid_video_file",
             Self::UploadSigning { .. } => "upload_signing",
