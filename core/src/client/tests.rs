@@ -919,6 +919,31 @@ async fn delete_video_propagates_transport_errors() {
     assert!(matches!(error, StreamableError::Transport { .. }));
 }
 
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_unauthenticated_video_deletion_is_observable() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = StreamableClient::new().expect("anonymous remote client should initialize");
+    let video = client
+        .upload_video(media_path("webm.webm"), None)
+        .await
+        .expect("remote video upload should reach transcoding");
+
+    client
+        .delete_video(&video.shortcode)
+        .await
+        .expect("remote video deletion should succeed");
+    let deleted = client
+        .get_video(&video.shortcode)
+        .await
+        .expect_err("deleted remote video should not remain readable");
+
+    assert!(matches!(
+        deleted,
+        StreamableError::HttpStatus { status: 404, .. }
+    ));
+}
+
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
 async fn set_video_thumbnail_frame_patches_exact_offset_and_decodes_video() {
@@ -2407,7 +2432,6 @@ async fn remote_anonymous_collection_lifecycle() {
     assert!(!client.is_authenticated());
     assert!(client.user().is_none());
     let mut video_shortcodes = Vec::new();
-    let mut collection_shortcode = None;
     let title = format!("anonymous-collection-{}", generate_random_password());
 
     let exercise_result: std::result::Result<(), String> = async {
@@ -2435,7 +2459,6 @@ async fn remote_anonymous_collection_lifecycle() {
             .create_collection(&video_shortcodes, None)
             .await
             .map_err(|error| format!("anonymous collection creation failed: {error}"))?;
-        collection_shortcode = Some(created.shortcode.clone());
 
         let count_after_create = client
             .count_collections()
@@ -2484,7 +2507,6 @@ async fn remote_anonymous_collection_lifecycle() {
             .delete_collection(&created.shortcode)
             .await
             .map_err(|error| format!("anonymous collection deletion failed: {error}"))?;
-        collection_shortcode = None;
 
         let count_after_delete = client
             .count_collections()
@@ -2500,27 +2522,9 @@ async fn remote_anonymous_collection_lifecycle() {
     }
     .await;
 
-    let mut cleanup_errors = Vec::new();
-    if let Some(shortcode) = collection_shortcode
-        && let Err(error) = client.delete_collection(&shortcode).await
-    {
-        cleanup_errors.push(format!("anonymous collection cleanup failed: {error}"));
-    }
-    for shortcode in &video_shortcodes {
-        if let Err(error) = client.delete_video(shortcode).await {
-            cleanup_errors.push(format!(
-                "anonymous video cleanup for '{shortcode}' failed: {error}"
-            ));
-        }
-    }
     assert!(!client.is_authenticated());
     assert!(client.user().is_none());
 
-    assert!(
-        cleanup_errors.is_empty(),
-        "remote anonymous collection cleanup failed: {}",
-        cleanup_errors.join("; ")
-    );
     assert!(
         exercise_result.is_ok(),
         "{}",
@@ -2538,7 +2542,6 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
     let client = remote_authenticated_client().await;
     let mut video_shortcodes = Vec::new();
-    let mut collection_shortcode = None;
     let title = format!("collection-{}", generate_random_password());
 
     let exercise_result: std::result::Result<(), String> = async {
@@ -2561,7 +2564,6 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             .create_collection(&video_shortcodes, None)
             .await
             .map_err(|error| format!("remote collection creation failed: {error}"))?;
-        collection_shortcode = Some(created.shortcode.clone());
         if created
             .videos
             .iter()
@@ -2624,7 +2626,6 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             .delete_collection(&created.shortcode)
             .await
             .map_err(|error| format!("remote collection deletion failed: {error}"))?;
-        collection_shortcode = None;
         let count_after_delete = client
             .count_collections()
             .await
@@ -2655,24 +2656,8 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
     }
     .await;
 
-    let mut cleanup_errors = Vec::new();
-    if let Some(shortcode) = collection_shortcode
-        && let Err(error) = client.delete_collection(&shortcode).await
-    {
-        cleanup_errors.push(format!("collection cleanup failed: {error}"));
-    }
-    for shortcode in &video_shortcodes {
-        if let Err(error) = client.delete_video(shortcode).await {
-            cleanup_errors.push(format!("video cleanup for '{shortcode}' failed: {error}"));
-        }
-    }
     drop(client);
 
-    assert!(
-        cleanup_errors.is_empty(),
-        "remote collection cleanup failed: {}",
-        cleanup_errors.join("; ")
-    );
     let exercise_error = exercise_result.err();
     assert!(
         exercise_error.is_none(),
