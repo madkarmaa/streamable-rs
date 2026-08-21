@@ -38,6 +38,18 @@ The response envelope is:
 }
 ```
 
+Live revalidation on 2026-08-21 confirmed that account-label access still
+requires authentication. From a fresh isolated Chrome context, both
+`GET /api/v1/labels` and a valid `POST /api/v1/labels` returned HTTP 401. The
+POST deliberately omitted credentials and carried neither a `Cookie` nor an
+`Authorization` header; its response was:
+
+```json
+{ "statusCode": 401, "error": "Unauthorized", "message": "Invalid Credentials" }
+```
+
+The rejected POST did not create a label.
+
 The video card's **More > Edit labels** item is conditional on the card
 receiving an edit-labels handler. In the inspected dashboard, that handler was
 present after the account had at least one label and absent after every label
