@@ -7,6 +7,7 @@ use crate::{
     utils,
 };
 use cookie_store::CookieStore;
+use file_format::FileFormat;
 use http::{
     HeaderMap, HeaderValue, Method,
     header::{CONTENT_TYPE, COOKIE},
@@ -931,6 +932,87 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
     /// model.
     pub async fn get_video(&self, shortcode: &str) -> Result<models::Video> {
         self.execute(&models::GetVideoRequest::new(shortcode)).await
+    }
+
+    /// Uses a video frame at the given offset as its thumbnail. Works without signing in.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let video = client.set_video_thumbnail_frame("abc123", 12.5).await?;
+    /// assert_eq!(video.thumbnail_offset.as_deref(), Some("12.5"));
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `seconds` is negative or non-finite, the request fails, Streamable
+    /// rejects the change, or the response does not match the video model.
+    pub async fn set_video_thumbnail_frame(
+        &self,
+        shortcode: &str,
+        seconds: f64,
+    ) -> Result<models::Video> {
+        if !seconds.is_finite() || seconds < 0.0 {
+            return Err(StreamableError::InvalidThumbnailOffset { seconds });
+        }
+
+        self.execute(&models::SetVideoThumbnailFrameRequest::new(
+            shortcode, seconds,
+        ))
+        .await
+    }
+
+    /// Uploads an image as a video's custom thumbnail. Works without signing in.
+    ///
+    /// The image format is detected from file contents. The multipart upload preserves the local
+    /// file name and detected media type.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let video = client.upload_video_thumbnail("abc123", "thumbnail.png").await?;
+    /// assert_eq!(video.thumbnail_offset.as_deref(), Some("-1"));
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the path cannot be read, is not a recognized image, the request
+    /// fails, Streamable rejects the change, or the response does not match the video model.
+    pub async fn upload_video_thumbnail(
+        &self,
+        shortcode: &str,
+        image_file: impl AsRef<Path>,
+    ) -> Result<models::Video> {
+        let image_file = std::fs::canonicalize(image_file.as_ref()).inspect_err(|_| {
+            tracing::debug!(
+                error.kind = "io",
+                operation = "canonicalize",
+                "thumbnail upload setup failed"
+            );
+        })?;
+
+        if !utils::is_image_file(&image_file) {
+            tracing::debug!(
+                error.kind = "invalid_image_file",
+                "thumbnail upload setup failed"
+            );
+            return Err(StreamableError::InvalidImageFile { path: image_file });
+        }
+
+        let file_name = image_file
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| StreamableError::InvalidImageFile {
+                path: image_file.clone(),
+            })?;
+        let media_type = FileFormat::from_file(&image_file)?.media_type().to_string();
+
+        self.execute(&models::UploadVideoThumbnailRequest::new(
+            shortcode, image_file, file_name, media_type,
+        ))
+        .await
     }
 
     /// Deletes a video. Works without signing in.

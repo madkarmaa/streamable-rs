@@ -5,14 +5,14 @@ use crate::constants::{
 use crate::{
     errors::{Result as StreamableResult, StreamableError},
     response::ApiResponse,
-    transport::Body,
+    transport::{Body, MultipartFile},
 };
 use http::{
     HeaderMap, HeaderValue, StatusCode,
     header::{CACHE_CONTROL, CONTENT_TYPE, PRAGMA},
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use std::marker::PhantomData;
+use std::{marker::PhantomData, path::PathBuf};
 
 #[cfg(test)]
 mod tests;
@@ -75,6 +75,25 @@ fn api_error_message(response: &ApiResponse) -> String {
         .map(|error| error.message)
         .filter(|message| !message.is_empty())
         .unwrap_or_else(|| response.text().into_owned())
+}
+
+fn decode_video_thumbnail_response(
+    response: ApiResponse,
+    shortcode: &str,
+) -> StreamableResult<Video> {
+    if let Some(error) = common_api_error(&response) {
+        return Err(error);
+    }
+
+    if !response.status().is_success() {
+        return Err(StreamableError::VideoThumbnailUpdateFailed {
+            shortcode: shortcode.to_string(),
+            status: response.status().as_u16(),
+            message: api_error_message(&response),
+        });
+    }
+
+    response.json()
 }
 
 fn collection_headers() -> HeaderMap {
@@ -1336,6 +1355,100 @@ pub(crate) struct GetVideoRequest {
     url: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SetVideoThumbnailFrameRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+    thumb_offset: f64,
+}
+
+impl SetVideoThumbnailFrameRequest {
+    #[must_use]
+    pub(crate) fn new(shortcode: &str, seconds: f64) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/screenshots/{shortcode}"),
+            shortcode: shortcode.to_string(),
+            thumb_offset: seconds,
+        }
+    }
+}
+
+impl ApiRequest for SetVideoThumbnailFrameRequest {
+    type Response = Video;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::PATCH
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_video_thumbnail_response(response, &self.shortcode)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct UploadVideoThumbnailRequest {
+    #[serde(skip)]
+    url: String,
+    #[serde(skip)]
+    shortcode: String,
+    #[serde(skip)]
+    image_file: PathBuf,
+    #[serde(skip)]
+    file_name: String,
+    #[serde(skip)]
+    media_type: String,
+}
+
+impl UploadVideoThumbnailRequest {
+    #[must_use]
+    pub(crate) fn new(
+        shortcode: &str,
+        image_file: PathBuf,
+        file_name: String,
+        media_type: String,
+    ) -> Self {
+        Self {
+            url: format!("{API_BASE_URL}/screenshots/{shortcode}/upload"),
+            shortcode: shortcode.to_string(),
+            image_file,
+            file_name,
+            media_type,
+        }
+    }
+}
+
+impl ApiRequest for UploadVideoThumbnailRequest {
+    type Response = Video;
+
+    fn url(&self) -> &str {
+        &self.url
+    }
+
+    fn method(&self) -> http::Method {
+        http::Method::POST
+    }
+
+    fn body(&self) -> StreamableResult<Body> {
+        Ok(Body::MultipartFile(MultipartFile {
+            field_name: "screenshot".to_string(),
+            file_name: self.file_name.clone(),
+            media_type: self.media_type.clone(),
+            path: self.image_file.clone(),
+        }))
+    }
+
+    fn decode_response(&self, response: ApiResponse) -> StreamableResult<Self::Response> {
+        decode_video_thumbnail_response(response, &self.shortcode)
+    }
+}
+
 impl GetVideoRequest {
     #[must_use]
     pub(crate) fn new(shortcode: &str) -> Self {
@@ -1607,6 +1720,12 @@ pub struct Video {
     pub width: Option<u32>,
     /// Pixel height when known.
     pub height: Option<u32>,
+    /// Signed thumbnail URL, when one is available.
+    pub thumbnail_url: Option<String>,
+    /// Protocol-relative thumbnail URL whose value changes after thumbnail edits.
+    pub dynamic_thumbnail_url: Option<String>,
+    /// Persisted frame offset, or `"-1"` for a custom uploaded image.
+    pub thumbnail_offset: Option<String>,
     /// Video privacy, when included.
     #[serde(default)]
     pub privacy_settings: Option<VideoPrivacySettings>,

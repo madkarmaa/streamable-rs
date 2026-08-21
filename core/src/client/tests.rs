@@ -78,6 +78,46 @@ impl Match for NoQuery {
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+struct MultipartScreenshot {
+    file_name: String,
+    media_type: &'static str,
+    contents: Vec<u8>,
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+impl Match for MultipartScreenshot {
+    fn matches(&self, request: &Request) -> bool {
+        let Some(content_type) = request
+            .headers
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+        else {
+            return false;
+        };
+        let Some(boundary) = content_type.strip_prefix("multipart/form-data; boundary=") else {
+            return false;
+        };
+        let body_text = String::from_utf8_lossy(&request.body);
+        let disposition = format!(
+            "Content-Disposition: form-data; name=\"screenshot\"; filename=\"{}\"",
+            self.file_name
+        );
+        let closing_boundary = format!("\r\n--{boundary}--\r\n");
+
+        body_text.matches("Content-Disposition: form-data;").count() == 1
+            && body_text.contains(&disposition)
+            && body_text.contains(&format!("Content-Type: {}", self.media_type))
+            && request
+                .body
+                .windows(self.contents.len())
+                .filter(|window| *window == self.contents.as_slice())
+                .count()
+                == 1
+            && request.body.ends_with(closing_boundary.as_bytes())
+    }
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 fn authenticated_user(email: &str) -> serde_json::Value {
     json!({
         "socket": "mock-socket",
@@ -212,6 +252,19 @@ fn image_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../media/images")
         .join(name)
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn mock_thumbnail_video(
+    shortcode: &str,
+    offset: &str,
+    dynamic_thumbnail_url: &str,
+) -> serde_json::Value {
+    let mut video = mock_video(shortcode, false);
+    video["thumbnail_url"] = json!("https://cdn.example/image.jpg?Expires=123&Signature=opaque");
+    video["dynamic_thumbnail_url"] = json!(dynamic_thumbnail_url);
+    video["thumbnail_offset"] = json!(offset);
+    video
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -866,6 +919,219 @@ async fn delete_video_propagates_transport_errors() {
     assert!(matches!(error, StreamableError::Transport { .. }));
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn set_video_thumbnail_frame_patches_exact_offset_and_decodes_video() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/screenshots/abc123"))
+        .and(NoQuery)
+        .and(header("cookie", "session=mock-session"))
+        .and(header("content-type", "application/json"))
+        .and(body_json(json!({ "thumbOffset": 12.5 })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(mock_thumbnail_video(
+                "abc123",
+                "12.5",
+                "//cdn.example/abc123-screenshot.jpg",
+            )),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let video = client
+        .set_video_thumbnail_frame("abc123", 12.5)
+        .await
+        .expect("frame thumbnail update should succeed");
+
+    assert_eq!(video.thumbnail_offset.as_deref(), Some("12.5"));
+    assert_eq!(
+        video.dynamic_thumbnail_url.as_deref(),
+        Some("//cdn.example/abc123-screenshot.jpg")
+    );
+    assert_eq!(
+        video.thumbnail_url.as_deref(),
+        Some("https://cdn.example/image.jpg?Expires=123&Signature=opaque")
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn upload_video_thumbnail_posts_one_streamed_screenshot_file() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    let image_file = image_path("png.png");
+    let image_contents = std::fs::read(&image_file).expect("PNG fixture should be readable");
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/screenshots/abc123/upload"))
+        .and(NoQuery)
+        .and(header("cookie", "session=mock-session"))
+        .and(MultipartScreenshot {
+            file_name: "png.png".to_string(),
+            media_type: "image/png",
+            contents: image_contents,
+        })
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(mock_thumbnail_video(
+                "abc123",
+                "-1",
+                "//cdn.example/upload-abc123.jpg",
+            )),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let video = client
+        .upload_video_thumbnail("abc123", &image_file)
+        .await
+        .expect("custom thumbnail upload should succeed");
+
+    assert_eq!(video.thumbnail_offset.as_deref(), Some("-1"));
+    assert_eq!(
+        video.dynamic_thumbnail_url.as_deref(),
+        Some("//cdn.example/upload-abc123.jpg")
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_thumbnail_inputs_are_validated_before_requests() {
+    let mock_server = MockServer::start().await;
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+
+    for seconds in [-1.0, f64::NAN, f64::INFINITY] {
+        let error = client
+            .set_video_thumbnail_frame("abc123", seconds)
+            .await
+            .expect_err("invalid thumbnail offset should be rejected");
+        assert!(matches!(
+            error,
+            StreamableError::InvalidThumbnailOffset { .. }
+        ));
+    }
+
+    let error = client
+        .upload_video_thumbnail("abc123", media_path("webm.webm"))
+        .await
+        .expect_err("video content should be rejected as a thumbnail image");
+    assert!(matches!(error, StreamableError::InvalidImageFile { .. }));
+    assert!(
+        mock_server
+            .received_requests()
+            .await
+            .expect("mock server should record requests")
+            .is_empty(),
+        "invalid inputs must not reach Streamable"
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_thumbnail_operations_map_endpoint_and_common_errors() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    let image_file = image_path("png.png");
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/screenshots/rejected"))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+            "message": "Offset exceeds video duration"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/screenshots/rejected/upload"))
+        .respond_with(ResponseTemplate::new(415).set_body_json(json!({
+            "message": "Unsupported image"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/screenshots/expired"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "message": "Session expired"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/screenshots/rate-limited/upload"))
+        .respond_with(ResponseTemplate::new(429))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let (client, _, _) = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+
+    let frame_error = expect_streamable_error(
+        client.set_video_thumbnail_frame("rejected", 100.0).await,
+        "rejected frame thumbnail should fail",
+    );
+    let upload_error = expect_streamable_error(
+        client.upload_video_thumbnail("rejected", &image_file).await,
+        "rejected custom thumbnail should fail",
+    );
+    let session_error = expect_streamable_error(
+        client.set_video_thumbnail_frame("expired", 1.0).await,
+        "expired thumbnail session should fail",
+    );
+    let rate_limit_error = expect_streamable_error(
+        client
+            .upload_video_thumbnail("rate-limited", &image_file)
+            .await,
+        "rate-limited thumbnail upload should fail",
+    );
+
+    assert!(matches!(
+        frame_error,
+        StreamableError::VideoThumbnailUpdateFailed {
+            ref shortcode,
+            status: 422,
+            ref message
+        } if shortcode == "rejected" && message == "Offset exceeds video duration"
+    ));
+    assert!(matches!(
+        upload_error,
+        StreamableError::VideoThumbnailUpdateFailed {
+            ref shortcode,
+            status: 415,
+            ref message
+        } if shortcode == "rejected" && message == "Unsupported image"
+    ));
+    assert!(matches!(
+        session_error,
+        StreamableError::InvalidSession { ref message } if message == "Session expired"
+    ));
+    assert!(matches!(
+        rate_limit_error,
+        StreamableError::RateLimitExceeded { ref endpoint }
+            if endpoint.ends_with("/api/v1/screenshots/rate-limited/upload")
+    ));
+}
+
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
 async fn remote_video_upload_reaches_transcoding() {
@@ -911,6 +1177,32 @@ async fn remote_video_upload_cancellation_is_accepted() {
         .await
         .expect("remote cancellation should succeed");
     drop(client);
+}
+
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+#[tokio::test]
+async fn remote_video_thumbnail_branches_are_reversible() {
+    let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
+    let client = remote_authenticated_client().await;
+    let video = client
+        .upload_video(media_path("webm.webm"), None)
+        .await
+        .expect("remote video upload should reach transcoding");
+    let image_file = image_path("png.png");
+
+    let custom_result = client
+        .upload_video_thumbnail(&video.shortcode, &image_file)
+        .await;
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    let restore_result = client
+        .set_video_thumbnail_frame(&video.shortcode, 0.5)
+        .await;
+    drop(client);
+
+    let custom = custom_result.expect("remote custom thumbnail upload should succeed");
+    assert_eq!(custom.thumbnail_offset.as_deref(), Some("-1"));
+    let restored = restore_result.expect("remote frame thumbnail restore should succeed");
+    assert_ne!(restored.thumbnail_offset.as_deref(), Some("-1"));
 }
 
 #[test]

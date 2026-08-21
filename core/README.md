@@ -4,7 +4,7 @@ Unofficial async Rust client for Streamable's undocumented API.
 
 ## API coverage
 
-- Videos: upload, fetch, delete, privacy, analytics, and live views.
+- Videos: upload, fetch, delete, thumbnails, privacy, analytics, and live views.
 - Collections: create, list, fetch, update, and delete.
 - Accounts: register, sign in, refresh, change password, and set defaults.
 - Labels: create, rename, delete, and assign to videos.
@@ -24,6 +24,7 @@ client.update_video_privacy(&video.shortcode, &VideoPrivacySettingsUpdate {
     allow_download: Some(false),
     ..Default::default()
 }).await?;
+client.set_video_thumbnail_frame(&video.shortcode, 1.5).await?;
 # Ok(()) }
 ```
 
@@ -61,7 +62,8 @@ tokio::select! {
 
 The default `reqwest` feature provides `StreamableClient::new()` and streams file uploads with
 Tokio. Without default features, use `StreamableClient::with_transport` and implement
-`transport::HttpTransport`. File uploads use `transport::Body::File`.
+`transport::HttpTransport`. Raw file uploads use `transport::Body::File`; custom thumbnail uploads
+use `transport::Body::MultipartFile`.
 
 ## Testing and tracing
 
