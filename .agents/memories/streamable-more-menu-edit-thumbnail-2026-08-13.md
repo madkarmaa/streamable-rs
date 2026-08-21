@@ -179,6 +179,12 @@ sending the frame PATCH again. Final observed state was:
 This proves the two branches are reversible at the API level for this guest
 video: a later frame selection replaces the custom-image sentinel.
 
+Live remote-suite validation on 2026-08-21 found a mutation cooldown between
+the branches. Sending the frame PATCH immediately after a successful custom
+upload returned HTTP 409 with `Too early to change thumbnail`. Waiting five
+seconds and then sending the frame PATCH once succeeded. Remote coverage uses
+that bounded separation and does not retry either mutation.
+
 ## Rust implementation
 
 The core client exposes the two branches as separate typed operations:
@@ -217,4 +223,5 @@ Local mock coverage should verify:
 
 Remote coverage remains behind `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`,
 uses a disposable video, restores the frame-thumbnail branch after the custom
-upload, and deletes the video after verification.
+upload following the observed five-second cooldown, and deletes the video
+after verification.
