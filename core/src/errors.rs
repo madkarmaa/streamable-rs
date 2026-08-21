@@ -193,6 +193,33 @@ pub enum StreamableError {
         path: PathBuf,
     },
 
+    /// The thumbnail upload path is not an image file.
+    #[error("Path '{}' is not a valid image file", path.display())]
+    InvalidImageFile {
+        /// Rejected path.
+        path: PathBuf,
+    },
+
+    /// A requested video-frame thumbnail offset is invalid.
+    #[error("Thumbnail offset must be finite and non-negative, got {seconds}")]
+    InvalidThumbnailOffset {
+        /// Rejected offset in seconds.
+        seconds: f64,
+    },
+
+    /// Streamable rejected a video thumbnail change.
+    #[error(
+        "updating thumbnail for video '{shortcode}' failed with HTTP status {status}: {message}"
+    )]
+    VideoThumbnailUpdateFailed {
+        /// Video whose thumbnail was not changed.
+        shortcode: String,
+        /// Numeric HTTP status.
+        status: u16,
+        /// Server message.
+        message: String,
+    },
+
     /// The S3 upload request could not be signed.
     #[error("the S3 upload request could not be signed: {message}")]
     UploadSigning {
@@ -289,6 +316,9 @@ impl StreamableError {
             Self::CollectionDeletionFailed { .. } => "collection_deletion_failed",
             Self::RateLimitExceeded { .. } => "rate_limit_exceeded",
             Self::InvalidVideoFile { .. } => "invalid_video_file",
+            Self::InvalidImageFile { .. } => "invalid_image_file",
+            Self::InvalidThumbnailOffset { .. } => "invalid_thumbnail_offset",
+            Self::VideoThumbnailUpdateFailed { .. } => "video_thumbnail_update_failed",
             Self::UploadSigning { .. } => "upload_signing",
             Self::UploadRollback { .. } => "upload_rollback",
             Self::UnexpectedVideoDeletionResponse { .. } => "unexpected_video_deletion_response",

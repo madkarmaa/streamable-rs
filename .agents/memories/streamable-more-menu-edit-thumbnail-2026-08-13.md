@@ -1,6 +1,6 @@
 # Streamable dashboard More menu: Edit thumbnail
 
-Implementation status: **Not implemented in `streamable-rs`.**
+Implementation status: **Implemented in `streamable-rs`.**
 
 Captured 2026-08-13 from current Streamable web UI, production source maps,
 and Chrome DevTools network inspection. This file records only the **Edit
@@ -179,18 +179,30 @@ sending the frame PATCH again. Final observed state was:
 This proves the two branches are reversible at the API level for this guest
 video: a later frame selection replaces the custom-image sentinel.
 
-## Future Rust implementation guidance
+Live remote-suite validation on 2026-08-21 found a mutation cooldown between
+the branches. Sending the frame PATCH immediately after a successful custom
+upload returned HTTP 409 with `Too early to change thumbnail`. Waiting five
+seconds and then sending the frame PATCH once succeeded. Remote coverage uses
+that bounded separation and does not retry either mutation.
 
-Model the branches as separate typed operations:
+## Rust implementation
+
+The core client exposes the two branches as separate typed operations:
 
 - `set_video_thumbnail_frame(shortcode, seconds)` using JSON PATCH;
 - `upload_video_thumbnail(shortcode, image)` using multipart POST.
 
+`utils::is_image_file` recognizes images from their contents. Thumbnail upload
+canonicalizes and validates the file before network access, preserves the file
+name, derives its media type from the detected format, and streams it through
+`transport::Body::MultipartFile`. Invalid images and invalid offsets fail with
+explicit local errors; non-success API responses map to the endpoint-specific
+`VideoThumbnailUpdateFailed` error.
+
 Do not expose generated CDN naming rules as stable API. Preserve the response's
-string offset unless a validated conversion layer explicitly accepts both JSON
-strings and numbers. Validate finite, non-negative seconds in the Rust API even
-though the current browser time parser is permissive, but keep server error
-responses available for compatibility diagnostics.
+string offset. The Rust API validates finite, non-negative seconds even though
+the current browser time parser is permissive, while retaining server messages
+for compatibility diagnostics.
 
 ## Deterministic test targets
 
@@ -209,6 +221,7 @@ Local mock coverage should verify:
 7. non-success JSON `message` values map to an explicit thumbnail error;
 8. signed CDN URLs are treated as opaque response data.
 
-Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use a disposable video, and
-restore the original thumbnail branch after verification.
+Remote coverage remains behind `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`,
+uses a disposable video, restores the frame-thumbnail branch after the custom
+upload following the observed five-second cooldown, and retains the video after
+verification instead of sending a cleanup DELETE.

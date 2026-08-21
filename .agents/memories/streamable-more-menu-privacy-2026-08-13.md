@@ -368,10 +368,10 @@ DELETE remains bodyless. Non-success message payloads map to explicit update or
 reset domain errors, while invalid-session and rate-limit errors retain shared
 mappings. Deterministic local tests cover partial fields, hidden visibility,
 password null, exact paths and headers, bodyless reset, explicit refresh, and
-error branches. A feature-gated remote lifecycle test updates one disposable
-video to private, refreshes it, resets defaults, verifies `is_custom:false`,
-and deletes the video; it is compiled by all-features Clippy but not run by
-default.
+error branches. A feature-gated remote test updates one disposable video to
+private, refreshes it, and retains it in that state; it is compiled by
+all-features Clippy but not run by default. Reset behavior remains covered by
+deterministic local tests rather than an extra cleanup DELETE.
 
 ## Deterministic test targets
 
@@ -393,5 +393,5 @@ Local mock coverage should verify:
 
 Any remote coverage must remain behind
 `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use a disposable video, serialize
-through `REMOTE_TEST_LOCK`, make the minimum mutations, and finish with DELETE
-reset plus a GET proving `is_custom:false`.
+through `REMOTE_TEST_LOCK`, make the minimum mutations, and retain the resulting
+resource and state unless the reset DELETE is itself the behavior under test.

@@ -3,9 +3,11 @@ use super::{
     CollectionDetails, CollectionPage, CreateCollectionRequest, CreateLabelRequest,
     CreateUserRequest, DomainRestrictions, InitializeVideoUploadRequest, ListCollectionsRequest,
     PrivacySettingsRequest, RenameLabelRequest, ReplaceCollectionVideosRequest,
-    SetVideoLabelsRequest, TranscodeVideoRequest, UpdateCollectionTitleRequest, UploadInfo,
-    VideoAnalyticsSummary, VideoPasswordUpdate, VideoPrivacySettingsUpdate, Visibility,
+    SetVideoLabelsRequest, SetVideoThumbnailFrameRequest, TranscodeVideoRequest,
+    UpdateCollectionTitleRequest, UploadInfo, UploadVideoThumbnailRequest, VideoAnalyticsSummary,
+    VideoPasswordUpdate, VideoPrivacySettingsUpdate, Visibility,
 };
+use crate::transport::Body;
 
 #[test]
 fn collection_response_models_deserialize_distinct_wire_shapes() {
@@ -219,6 +221,38 @@ fn video_privacy_password_removal_serializes_as_null() {
         serde_json::to_value(update).expect("password removal should serialize"),
         serde_json::json!({ "password": null })
     );
+}
+
+#[test]
+fn thumbnail_frame_request_uses_camel_case_offset_only() {
+    let request = SetVideoThumbnailFrameRequest::new("abc123", 12.5);
+
+    assert_eq!(
+        serde_json::to_value(request).expect("thumbnail frame request should serialize"),
+        serde_json::json!({ "thumbOffset": 12.5 })
+    );
+}
+
+#[test]
+fn thumbnail_upload_request_builds_exact_screenshot_file_part() {
+    let path = std::path::PathBuf::from("thumbnail.png");
+    let request = UploadVideoThumbnailRequest::new(
+        "abc123",
+        path.clone(),
+        "thumbnail.png".to_string(),
+        "image/png".to_string(),
+    );
+
+    let Body::MultipartFile(file) = request
+        .body()
+        .expect("thumbnail upload body should be constructed")
+    else {
+        panic!("thumbnail upload should use a multipart file body");
+    };
+    assert_eq!(file.field_name, "screenshot");
+    assert_eq!(file.file_name, "thumbnail.png");
+    assert_eq!(file.media_type, "image/png");
+    assert_eq!(file.path, path);
 }
 
 #[test]

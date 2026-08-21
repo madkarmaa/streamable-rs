@@ -12,9 +12,9 @@ errors and ordinary HTTP/transport errors retain the existing mappings.
 
 Offline client tests cover unauthenticated access, the full path, method, absent
 cookie, missing body and `Content-Type`, literal success contract, non-literal
-success bodies, common errors, ordinary HTTP errors, and transport failure. The
-existing gated remote upload test deletes through the public method in the
-unauthenticated client state and verifies that
+success bodies, common errors, ordinary HTTP errors, and transport failure. A
+focused gated remote deletion test uploads through an unauthenticated client,
+deletes through the public method, and verifies that
 `GET /api/v1/videos/<shortcode>` returns Not Found.
 
 Verified against the authenticated web dashboard on 2026-08-13. This records the
