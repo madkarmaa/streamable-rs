@@ -130,7 +130,9 @@ For remote mutation tests:
 - serialize through the existing `REMOTE_TEST_LOCK`;
 - make the minimum number of requests;
 - do not repeatedly retry;
-- clean up created resources when the API supports cleanup.
+- retain created resources instead of sending extra cleanup requests;
+- issue a remote DELETE only when that deletion operation is the behavior under
+  test, never as cleanup for another behavior or as a fallback after failure.
 
 Rate-limit behavior is local-only. Never deliberately trigger remote rate limits.
 
