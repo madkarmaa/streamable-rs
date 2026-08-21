@@ -204,7 +204,13 @@ fn mock_upload_client(server: &MockServer) -> Result<UnauthenticatedStreamableCl
 
 fn media_path(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../media")
+        .join("../media/videos")
+        .join(name)
+}
+
+fn image_path(name: &str) -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../media/images")
         .join(name)
 }
 

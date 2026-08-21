@@ -103,6 +103,23 @@ pub fn is_video_file(path: &Path) -> bool {
     recognized
 }
 
+/// Checks file contents for a recognized image format.
+///
+/// Missing files and unrecognized formats return `false`.
+///
+/// ```
+/// use std::path::Path;
+///
+/// assert!(!streamable::utils::is_image_file(Path::new("missing-image.png")));
+/// ```
+#[must_use]
+pub fn is_image_file(path: &Path) -> bool {
+    let recognized = path.is_file()
+        && FileFormat::from_file(path).is_ok_and(|format| matches!(format.kind(), Kind::Image));
+    tracing::debug!(recognized, "inspected candidate image file");
+    recognized
+}
+
 fn is_raw_hevc(path: &Path) -> bool {
     let Ok(file) = File::open(path) else {
         return false;
