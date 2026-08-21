@@ -13,3 +13,10 @@ remote tests do not clear or reset those changes. Password tests are the only
 exception and restore the shared password so later tests can sign in.
 Registration tests continue creating new users because account creation is the
 behavior under test.
+
+Remote tests must not send DELETE requests merely to clean up resources created
+while testing another behavior, including fallback cleanup after a failure.
+Retaining those resources avoids unnecessary live API traffic. A DELETE belongs
+in the remote suite only when that deletion operation is itself the behavior
+under test; such a test creates the smallest required fixture and issues the
+single deletion needed for its assertion.

@@ -245,9 +245,9 @@ responses retain their existing domain errors.
 Deterministic mock tests cover the exact path, method, cookie, caller-ordered
 and empty replacement bodies, bodyless success, endpoint-specific failure, and
 shared error mappings. A bounded feature-gated remote test uploads one
-disposable video, creates one disposable label, assigns and clears it, then
-deletes both resources. It is compiled by the all-features Clippy gate but is
-not run by default.
+disposable video, creates one disposable label, assigns it, and retains both
+resources. A separate remote lifecycle creates and renames one label. Both are
+compiled by the all-features Clippy gate but are not run by default.
 
 Bulk assignment can be built above the single-video primitive. If it mirrors
 the dashboard, document that it is non-transactional: successful videos remain
@@ -278,5 +278,6 @@ Local mock coverage should verify:
 
 Any remote coverage must remain behind
 `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use a disposable authenticated
-account and video, serialize mutations through `REMOTE_TEST_LOCK`, restore the
-video's original labels, and delete created labels when cleanup is supported.
+account and video, serialize mutations through `REMOTE_TEST_LOCK`, make the
+minimum mutations, and retain created resources and assigned labels rather than
+sending cleanup DELETE requests.

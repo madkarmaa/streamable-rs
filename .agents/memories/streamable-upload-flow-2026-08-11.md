@@ -1432,9 +1432,10 @@ order, JSON field names, raw file body, signed headers, absence of `x-amz-acl`,
 bodyless cancellation, no transcode after cancellation, pre-cancel behavior, and
 shortcode HTTP 429 mapping before mutation.
 
-Feature-gated remote tests cover one complete upload with deletion and one
-shortcode/initialize/cancel sequence. The 2026-08-12 cancellation run passed.
-Default tests remain offline.
+Feature-gated remote tests cover one complete upload that retains its video and
+one shortcode/initialize/cancel sequence where cancellation is the behavior
+under test. The 2026-08-12 cancellation run passed. Default tests remain
+offline.
 
 Native `reqwest` already requires a Tokio-compatible runtime. The upload flow
 therefore uses Tokio directly for asynchronous file streaming, cancellation

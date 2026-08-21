@@ -223,5 +223,5 @@ Local mock coverage should verify:
 
 Remote coverage remains behind `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`,
 uses a disposable video, restores the frame-thumbnail branch after the custom
-upload following the observed five-second cooldown, and deletes the video
-after verification.
+upload following the observed five-second cooldown, and retains the video after
+verification instead of sending a cleanup DELETE.

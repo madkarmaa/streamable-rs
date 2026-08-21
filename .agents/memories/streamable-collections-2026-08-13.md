@@ -285,8 +285,8 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
   JSON field omission, ordered arrays, empty-body DELETE success, and status/error
   mapping. Any live coverage must remain behind
   `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use `REMOTE_TEST_LOCK`, make one
-  collection from bounded fixtures, delete it, and verify cleanup without
-  deleting the member videos.
+  collection from bounded fixtures, delete it as the deletion behavior under
+  test, and retain the member videos without fallback cleanup DELETE requests.
 
 ## Live verification cleanup
 
