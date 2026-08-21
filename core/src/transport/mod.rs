@@ -35,6 +35,8 @@ pub enum Body {
     Bytes(Bytes),
     /// File whose bytes must be streamed by the transport.
     File(PathBuf),
+    /// One file encoded as a multipart form by the transport.
+    MultipartFile(MultipartFile),
 }
 
 impl Body {
@@ -43,15 +45,29 @@ impl Body {
             Self::Empty => "empty",
             Self::Bytes(_) => "bytes",
             Self::File(_) => "file",
+            Self::MultipartFile(_) => "multipart_file",
         }
     }
 
     pub(crate) const fn in_memory_len(&self) -> Option<usize> {
         match self {
             Self::Bytes(bytes) => Some(bytes.len()),
-            Self::Empty | Self::File(_) => None,
+            Self::Empty | Self::File(_) | Self::MultipartFile(_) => None,
         }
     }
+}
+
+/// File part for a single-file multipart form request.
+#[derive(Debug)]
+pub struct MultipartFile {
+    /// Form field name.
+    pub field_name: String,
+    /// Original file name sent in the part metadata.
+    pub file_name: String,
+    /// Media type sent in the part metadata.
+    pub media_type: String,
+    /// Local file whose bytes must be streamed.
+    pub path: PathBuf,
 }
 
 /// Complete runtime-neutral HTTP request.

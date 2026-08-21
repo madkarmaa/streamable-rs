@@ -61,6 +61,13 @@ impl HttpTransport for ReqwestTransport {
                 let file = tokio::fs::File::open(path).await?;
                 builder.body(reqwest::Body::from(file))
             }
+            Body::MultipartFile(file_part) => {
+                let file = tokio::fs::File::open(file_part.path).await?;
+                let part = reqwest::multipart::Part::stream(reqwest::Body::from(file))
+                    .file_name(file_part.file_name)
+                    .mime_str(&file_part.media_type)?;
+                builder.multipart(reqwest::multipart::Form::new().part(file_part.field_name, part))
+            }
         };
 
         let response = builder.send().await?;
