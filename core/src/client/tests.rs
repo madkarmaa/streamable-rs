@@ -349,17 +349,19 @@ struct RecordingTransport {
 impl HttpTransport for RecordingTransport {
     type Error = std::io::Error;
 
-    async fn execute(
+    fn execute(
         &self,
         request: crate::transport::Request,
-    ) -> std::result::Result<crate::transport::Response, Self::Error> {
+    ) -> impl std::future::Future<
+        Output = std::result::Result<crate::transport::Response, Self::Error>,
+    > + Send {
         let requests = Arc::clone(&self.requests);
         lock_unpoisoned(&requests).push(request);
-        Ok(crate::transport::Response {
+        std::future::ready(Ok(crate::transport::Response {
             status: http::StatusCode::OK,
             headers: http::HeaderMap::new(),
             body: bytes::Bytes::from_static(b"true"),
-        })
+        }))
     }
 }
 
