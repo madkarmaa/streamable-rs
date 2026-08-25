@@ -38,38 +38,17 @@ The user strongly prefers atomic, behavior-specific commits. Do not bundle unrel
 
 When a change can be understood and reverted independently, it should usually stand independently.
 
-## Maintainer taste
+## A note from the maintainer
 
-Prefer evidence over intuition, small explicit APIs over clever machinery, and designs whose correct behavior is unsurprising. The service is undocumented, so simplicity means making observed constraints visible rather than hiding them behind broad abstractions.
+I prefer evidence over intuition, small explicit APIs over clever machinery, and designs whose correct behavior is unsurprising. The service is undocumented, so simplicity means making observed constraints visible rather than hiding them behind broad abstractions.
 
 Fight scope creep, but do not compress a change into the wrong layer merely to keep the diff small. Reuse an existing owner when it fits; introduce a new abstraction only when it makes the protocol or lifecycle clearer.
-
-Most of this document describes strong defaults. The user's current explicit direction can override process, order, and scope. Rules about live requests, credentials, destructive actions, and published history are hard safety boundaries: crossing them requires explicit authorization rather than inference.
 
 ## Before you start
 
 The repository uses a generated repository dump as working context.
 
 If the repository-root `dump/` directory does not exist, run the repository-root `dump.py` before normal project work. Do not regenerate an existing dump merely because it exists unless the current task actually requires a fresh one.
-
-## How it works
-
-`StreamableClient<State, T>` combines authentication typestate with a runtime-neutral `HttpTransport`. Request models implement the crate-private `ApiRequest` contract; the client resolves routing, serializes the request, manages cookies, sends it through the transport, and maps the response into endpoint-specific models and errors.
-
-Uploads have an explicit lifecycle. Shortcode allocation returns a `VideoUpload`; completion initializes metadata, streams the file to S3, and requests transcoding. A retained `VideoUploadHandle` keeps remote cancellation available when a runtime drops the completion future.
-
-The CLI is a thin consumer of `core/`. Protocol behavior belongs in the library rather than being reimplemented in `cli/`.
-
-## Where code lives
-
-- `core/src/client/` — typestate client, shared request pipeline, public operations, and client tests.
-- `core/src/models/` — public data models plus exact request/response wire models.
-- `core/src/transport/` — runtime-neutral HTTP types and the optional reqwest transport.
-- `core/src/response/` — shared response decoding.
-- `core/src/utils/` — file inspection and S3 signing.
-- `core/src/errors.rs` — domain and transport failures.
-- `cli/src/main.rs` — the small command-line consumer.
-- `.agents/memories/` — durable verified project knowledge, not task notes.
 
 ## Browser work
 
@@ -86,7 +65,7 @@ Keep user-facing README and rustdoc text short and plain. Remove repeated setup,
 
 Give every public module, type, and callable item a small usage example. Keep field and variant descriptions to one clear sentence, and use the parent type's example to show how those parts fit together.
 
-## Hard boundary: debugging and sensitive values
+## Debug without leaking secrets
 
 Concentrate debug instrumentation at the existing shared request pipeline, response decoder, transport, file-inspection, upload, signing, and rollback seams instead of duplicating it in each endpoint method.
 
@@ -136,7 +115,7 @@ The protocol is not limited to memories. Add other spec-compliant project-local 
 
 Keep them minimal, purposeful, portable, and friendly to version control.
 
-## Hard boundary: remote tests
+## Remote tests touch the real service
 
 Normal tests must never contact Streamable, create accounts, mutate labels, upload files, or otherwise send requests to the live service.
 
@@ -180,13 +159,15 @@ Mocks should protect observed API behavior, not merely prove that some request w
 
 ## Adding API behavior
 
-Start with the observed wire contract: endpoint, method, payload, aliases, authentication, success shape, and status/error behavior. Fixed protocol details stay inside the client rather than leaking into the public API.
+Unless the user gives a different order, build new API behavior in this sequence:
 
-A complete feature normally includes the request, response, and error models; deterministic mock coverage for the meaningful wire behavior and mapped statuses; the smallest implementation at the owning layer; targeted tests and Clippy; bounded feature-gated remote evidence when practical; and the full validation gate before completion.
+1. **Observe the wire.** Identify the endpoint, method, payload, aliases, authentication requirement, success shape, and status/error behavior.
+2. **Design the boundary.** Keep fixed protocol details inside the client instead of leaking them into the public Rust API.
+3. **Model the behavior.** Add request, response, and error models. Preserve established endpoint-specific domain errors and make new failure modes explicit.
+4. **Protect the contract.** Add deterministic mock coverage for meaningful wire behavior and mapped statuses before implementing the smallest change at the owning layer.
+5. **Validate in layers.** Run targeted tests and Clippy, add bounded feature-gated remote evidence when practical, then run the full validation gate.
 
-Preserve established endpoint-specific domain errors and make new failure modes explicit. Broad catch-all errors are a compatibility tool, not a default.
-
-That order is a working default. If the user specifies an implementation, validation, or commit sequence, follow it exactly.
+If the user specifies an implementation, validation, or commit sequence, follow it exactly.
 
 ## Verifying
 
@@ -209,13 +190,11 @@ cargo test --workspace --features DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER
 
 Do not run it casually. It is intentionally side-effecting and only appropriate when remote verification is explicitly warranted.
 
-## Git and work history
+## Let commits tell the story
 
-Treat commits as part of the implementation loop. The branch should read like a WIP PR: each completed, validated behavior lands as a small commit before work moves to the next independent concern.
-
-One concern per commit. Separate dependencies, implementation, ignore rules, refactors, and unrelated fixes whenever they can be understood and reverted independently; split individual hunks when that is the clearest boundary.
-
-Before every commit, inspect exactly what is staged:
+- **Commit during the implementation loop.** The branch should read like a WIP PR: land each completed, validated behavior before moving to the next independent concern.
+- **Keep one concern per commit.** Separate dependencies, implementation, ignore rules, refactors, and unrelated fixes whenever they can be understood and reverted independently; split individual hunks when that is the clearest boundary.
+- **Inspect exactly what is staged.** Before every commit, run:
 
 ```sh
 git diff --cached --stat
@@ -223,13 +202,33 @@ git diff --cached
 git diff --cached --check
 ```
 
-If an existing commit is too broad, a soft undo is the preferred way to repartition unpublished work:
+- **Repartition broad commits.** For unpublished work, prefer a soft undo:
 
 ```sh
 git reset --soft HEAD^
 ```
 
-Generated verification or rollback artifacts under `.codex/` stay untracked or ignored unless the user explicitly asks to commit them. Never push or rewrite published history unless the user explicitly asks.
+- **Keep work artifacts out of history.** Generated verification or rollback artifacts under `.codex/` stay untracked or ignored unless the user explicitly asks to commit them.
+- **Protect published history.** Never push or rewrite published history unless the user explicitly asks.
+
+## How it works
+
+`StreamableClient<State, T>` combines authentication typestate with a runtime-neutral `HttpTransport`. Request models implement the crate-private `ApiRequest` contract; the client resolves routing, serializes the request, manages cookies, sends it through the transport, and maps the response into endpoint-specific models and errors.
+
+Uploads have an explicit lifecycle. Shortcode allocation returns a `VideoUpload`; completion initializes metadata, streams the file to S3, and requests transcoding. A retained `VideoUploadHandle` keeps remote cancellation available when a runtime drops the completion future.
+
+The CLI is a thin consumer of `core/`. Protocol behavior belongs in the library rather than being reimplemented in `cli/`.
+
+## Where code lives
+
+- `core/src/client/` - typestate client, shared request pipeline, public operations, and client tests.
+- `core/src/models/` - public data models plus exact request/response wire models.
+- `core/src/transport/` - runtime-neutral HTTP types and the optional reqwest transport.
+- `core/src/response/` - shared response decoding.
+- `core/src/utils/` - file inspection and S3 signing.
+- `core/src/errors.rs` - domain and transport failures.
+- `cli/src/main.rs` - the small command-line consumer.
+- `.agents/memories/` - durable verified project knowledge, not task notes.
 
 ## When instructions disagree
 
