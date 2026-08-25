@@ -1,6 +1,6 @@
 # Streamable collections
 
-Implementation status: **Not implemented in `streamable-rs`.**
+Implementation status: **Implemented in `streamable-rs`.**
 
 Verified against the authenticated web application and current browser bundles
 on 2026-08-13. This memory is limited to **My Account > Collections** and its
