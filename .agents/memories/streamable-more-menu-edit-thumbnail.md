@@ -39,7 +39,7 @@ GET /api/v1/videos/<shortcode>?version=<version>
 The page uses the best source URL from the video response. Chrome then requests
 the signed CDN video URL, commonly with one or more HTTP range requests. The
 live inspection returned HTTP 206 while the page sought to the preview frame.
-Signed CDN query parameters are ephemeral and must never be persisted.
+Signed CDN query parameters are ephemeral.
 
 ## Branch 1: select a video frame
 
@@ -146,8 +146,8 @@ thumbnail URL and marked the custom-image sentinel:
 ```
 
 Thus `-1` is the observable custom-thumbnail marker. The service may normalize
-the uploaded format to JPEG; clients must use the returned URL rather than
-constructing one from the original file name.
+the uploaded format to JPEG. The returned URL is authoritative; a URL derived
+from the original file name is not part of the observed contract.
 
 ## Completion and error behavior
 
@@ -199,10 +199,10 @@ name, derives its media type from the detected format, and streams it through
 explicit local errors; non-success API responses map to the endpoint-specific
 `VideoThumbnailUpdateFailed` error.
 
-Do not expose generated CDN naming rules as stable API. Preserve the response's
-string offset. The Rust API validates finite, non-negative seconds even though
-the current browser time parser is permissive, while retaining server messages
-for compatibility diagnostics.
+Generated CDN naming rules are not exposed as stable API, and the response's
+string offset is preserved. The Rust API validates finite, non-negative seconds
+even though the current browser time parser is permissive, while retaining
+server messages for compatibility diagnostics.
 
 ## Deterministic test targets
 

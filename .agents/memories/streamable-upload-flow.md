@@ -3,14 +3,7 @@
 Implementation status: **Implemented in `streamable-rs`.**
 
 The wire contract was verified against the live browser flow on 2026-08-11.
-Streamable can drift, so revalidate it when upload integration behavior matters.
-
-## Security invariant
-
-Never store live upload credentials, session or transcoder tokens, policies,
-signatures, cookies, authorization values, account details, generated
-shortcodes, or signed CDN query strings in tracked fixtures or memories. Use
-descriptive placeholders when documenting their wire positions.
+This dated observation remains subject to Streamable protocol drift.
 
 ## Observed wire contract
 

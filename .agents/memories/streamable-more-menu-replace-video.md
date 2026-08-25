@@ -118,8 +118,7 @@ If the metadata response lacks `shortcode`, the client fails with
 `No shortcode present in metadata` and does not upload bytes.
 
 All credentials, tokens, policies, signatures, object keys with timestamps,
-and URLs from this response are ephemeral and must be treated as opaque secret
-material.
+and URLs from this response are ephemeral opaque values.
 
 ## Step 2: upload the file to S3
 

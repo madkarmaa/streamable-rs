@@ -105,10 +105,10 @@ Cache-Control: max-age=315360000
 
 The request had no body. The response contained the exact MP4 bytes.
 
-The CDN path included the active replacement version suffix `_2`. Clients must
-not construct that signed CDN URL from `version`; they must consume the opaque
-`url` returned for the file. Expiry, key-pair, and signature query values are
-ephemeral and must never be logged or stored in memory.
+The CDN path included the active replacement version suffix `_2`. The opaque
+`url` returned for the file is authoritative; construction from `version` is not
+part of the observed contract. Expiry, key-pair, and signature query values are
+ephemeral.
 
 Although the observed browser request was HTTP 200, the server advertises byte
 ranges. A non-browser download API should accept both 200 and 206 and stream
