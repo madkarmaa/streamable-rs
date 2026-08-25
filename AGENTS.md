@@ -53,6 +53,20 @@ When a task requires Chrome, a live page, browser inspection, reproduced web beh
 3. Do not skip directly to the MCP unless the user explicitly asks for it or the task is known to require a DevTools-only capability.
 4. After a partial browser action, inspect the current state before retrying. Do not accidentally duplicate submissions, uploads, mutations, account changes, or other side effects.
 
+## Documentation style
+
+Keep user-facing README and rustdoc text short and plain. Remove repeated setup, jargon, and background that does not help the caller use the API.
+
+Give every public module, type, and callable item a small usage example. Keep field and variant descriptions to one clear sentence, and use the parent type's example to show how those parts fit together.
+
+## Debugging and sensitive protocol values
+
+Concentrate debug instrumentation at the existing shared request pipeline, response decoder, transport, file-inspection, upload, signing, and rollback seams instead of duplicating it in each endpoint method.
+
+Never record raw request or response bodies, header or cookie values, passwords, account details, generated credentials, authorization values, policies, signatures, session or transcoder tokens, signed URLs, or sensitive error text. Applications retain ownership of tracing subscribers and filters.
+
+Treat temporary credentials and response-provided signed URLs as opaque secrets. Do not persist them in tracked fixtures or memories, expose generated naming rules as stable API, or reconstruct a signed URL when the service supplies the authoritative value.
+
 ## `.agents` is durable project memory
 
 Treat `.agents/` as portable agent state and follow the `.agents` protocol for supported structures and file formats.
@@ -104,6 +118,10 @@ The explicit opt-in feature is:
 ```text
 DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER
 ```
+
+Remote tests read `EMAIL` and `PASSWORD` from the repository-root `.env`. Keep only empty placeholders in the tracked `.env.example`; real credentials belong only in the ignored `.env`.
+
+Except for registration tests, use the existing lazily authenticated client and shared account for the test process. Registration tests create users because registration is the behavior under test. Password tests are the only shared-state restoration exception: restore the shared password so later tests can authenticate.
 
 Remote tests must be guarded with:
 
