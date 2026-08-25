@@ -216,6 +216,16 @@ pub struct StreamableClient<State = Unauthenticated, T = DefaultTransport> {
 ///
 /// Create one with [`StreamableClient::begin_video_upload`]. Call [`Self::complete`] for normal
 /// completion or [`Self::cancel`] for explicit cleanup.
+///
+/// ```no_run
+/// use streamable::{Result, StreamableClient, VideoUpload};
+///
+/// # async fn run() -> Result<()> {
+/// let client = StreamableClient::new()?;
+/// let upload: VideoUpload<'_> = client.begin_video_upload("video.mp4", None).await?;
+/// println!("{}", upload.shortcode());
+/// # Ok(()) }
+/// ```
 #[must_use = "the upload must be completed or explicitly cancelled"]
 pub struct VideoUpload<'a, State = Unauthenticated, T = DefaultTransport> {
     client: &'a StreamableClient<State, T>,
@@ -228,12 +238,29 @@ pub struct VideoUpload<'a, State = Unauthenticated, T = DefaultTransport> {
 
 impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
     /// Returns the allocated Streamable shortcode.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let upload = client.begin_video_upload("video.mp4", None).await?;
+    /// assert!(!upload.shortcode().is_empty());
+    /// # Ok(()) }
+    /// ```
     #[must_use]
     pub fn shortcode(&self) -> &str {
         &self.upload_info.shortcode
     }
 
     /// Creates an independent handle for cancelling this upload.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let upload = client.begin_video_upload("video.mp4", None).await?;
+    /// let handle = upload.handle();
+    /// assert_eq!(handle.shortcode(), upload.shortcode());
+    /// # Ok(()) }
+    /// ```
     #[must_use]
     pub fn handle(&self) -> VideoUploadHandle<'a, State, T> {
         VideoUploadHandle {
@@ -243,6 +270,15 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
     }
 
     /// Initializes the upload, streams the file to S3, and asks Streamable to transcode it.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let upload = client.begin_video_upload("video.mp4", None).await?;
+    /// let video = upload.complete().await?;
+    /// println!("{}", video.shortcode);
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -280,6 +316,14 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
 
     /// Cancels this allocated upload on Streamable.
     ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let upload = client.begin_video_upload("video.mp4", None).await?;
+    /// upload.cancel().await?;
+    /// # Ok(()) }
+    /// ```
+    ///
     /// # Errors
     ///
     /// Returns an error when Streamable rejects the cancellation request.
@@ -296,6 +340,17 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
 }
 
 /// Lightweight cancellation handle for an allocated [`VideoUpload`].
+///
+/// ```no_run
+/// use streamable::{Result, StreamableClient, VideoUploadHandle};
+///
+/// # async fn run() -> Result<()> {
+/// let client = StreamableClient::new()?;
+/// let upload = client.begin_video_upload("video.mp4", None).await?;
+/// let handle: VideoUploadHandle<'_> = upload.handle();
+/// println!("{}", handle.shortcode());
+/// # Ok(()) }
+/// ```
 pub struct VideoUploadHandle<'a, State = Unauthenticated, T = DefaultTransport> {
     client: &'a StreamableClient<State, T>,
     shortcode: String,
@@ -312,12 +367,28 @@ impl<State, T> Clone for VideoUploadHandle<'_, State, T> {
 
 impl<State: Sync, T: HttpTransport> VideoUploadHandle<'_, State, T> {
     /// Returns the allocated Streamable shortcode.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let upload = client.begin_video_upload("video.mp4", None).await?;
+    /// assert_eq!(upload.handle().shortcode(), upload.shortcode());
+    /// # Ok(()) }
+    /// ```
     #[must_use]
     pub fn shortcode(&self) -> &str {
         &self.shortcode
     }
 
     /// Cancels the allocated upload on Streamable.
+    ///
+    /// ```no_run
+    /// # async fn run() -> streamable::Result<()> {
+    /// let client = streamable::StreamableClient::new()?;
+    /// let upload = client.begin_video_upload("video.mp4", None).await?;
+    /// upload.handle().cancel().await?;
+    /// # Ok(()) }
+    /// ```
     ///
     /// # Errors
     ///
@@ -366,6 +437,15 @@ impl StreamableClient<Unauthenticated, crate::transport::ReqwestTransport> {
 
 impl<T> StreamableClient<Unauthenticated, T> {
     /// Creates a signed-out client using a caller-supplied HTTP transport.
+    ///
+    /// ```
+    /// use streamable::{StreamableClient, transport::ReqwestTransport};
+    ///
+    /// let transport = ReqwestTransport::new()?;
+    /// let client = StreamableClient::with_transport(transport);
+    /// assert!(!client.is_authenticated());
+    /// # Ok::<(), streamable::transport::ReqwestTransportError>(())
+    /// ```
     #[must_use]
     pub fn with_transport(transport: T) -> Self {
         Self::with_transport_and_routing(transport, EndpointRouting::Production)

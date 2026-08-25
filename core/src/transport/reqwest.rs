@@ -2,6 +2,14 @@ use super::{Body, HttpTransport, Request, Response};
 use thiserror::Error;
 
 /// Errors returned by [`ReqwestTransport`].
+///
+/// ```no_run
+/// use streamable::transport::ReqwestTransportError;
+///
+/// fn report(error: &ReqwestTransportError) {
+///     eprintln!("{error}");
+/// }
+/// ```
 #[derive(Debug, Error)]
 pub enum ReqwestTransportError {
     /// Opening a file-backed request body failed.
@@ -13,6 +21,13 @@ pub enum ReqwestTransportError {
 }
 
 /// Default HTTP transport backed by reqwest and Tokio.
+///
+/// ```
+/// use streamable::transport::ReqwestTransport;
+///
+/// let transport = ReqwestTransport::new()?;
+/// # Ok::<(), streamable::transport::ReqwestTransportError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct ReqwestTransport {
     client: reqwest::Client,
@@ -20,6 +35,11 @@ pub struct ReqwestTransport {
 
 impl ReqwestTransport {
     /// Builds a transport with reqwest's default client configuration.
+    ///
+    /// ```
+    /// let transport = streamable::transport::ReqwestTransport::new()?;
+    /// # Ok::<(), streamable::transport::ReqwestTransportError>(())
+    /// ```
     ///
     /// # Errors
     ///

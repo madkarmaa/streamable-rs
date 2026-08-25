@@ -14,19 +14,48 @@ pub use reqwest::{ReqwestTransport, ReqwestTransportError};
 /// Default transport placeholder when the `reqwest` feature is disabled.
 ///
 /// Construct clients with [`crate::StreamableClient::with_transport`] in that configuration.
+///
+/// ```
+/// use streamable::transport::NoDefaultTransport;
+///
+/// let transport: Option<NoDefaultTransport> = None;
+/// assert!(transport.is_none());
+/// ```
 #[cfg(not(feature = "reqwest"))]
 #[derive(Debug)]
 pub enum NoDefaultTransport {}
 
 /// Transport used by [`crate::StreamableClient`] when no transport type is specified.
+///
+/// ```
+/// use streamable::transport::{DefaultTransport, ReqwestTransport};
+///
+/// let transport: DefaultTransport = ReqwestTransport::new()?;
+/// # Ok::<(), streamable::transport::ReqwestTransportError>(())
+/// ```
 #[cfg(feature = "reqwest")]
 pub type DefaultTransport = ReqwestTransport;
 
 /// Placeholder default when the `reqwest` feature is disabled.
+///
+/// ```
+/// use streamable::transport::DefaultTransport;
+///
+/// let transport: Option<DefaultTransport> = None;
+/// assert!(transport.is_none());
+/// ```
 #[cfg(not(feature = "reqwest"))]
 pub type DefaultTransport = NoDefaultTransport;
 
 /// Request body understood by every transport.
+///
+/// ```
+/// use bytes::Bytes;
+/// use streamable::transport::Body;
+///
+/// let body = Body::Bytes(Bytes::from_static(b"{}"));
+/// assert!(matches!(body, Body::Bytes(_)));
+/// ```
 #[derive(Debug)]
 pub enum Body {
     /// No request body.
@@ -58,6 +87,19 @@ impl Body {
 }
 
 /// File part for a single-file multipart form request.
+///
+/// ```
+/// use std::path::PathBuf;
+/// use streamable::transport::MultipartFile;
+///
+/// let file = MultipartFile {
+///     field_name: "file".into(),
+///     file_name: "thumbnail.png".into(),
+///     media_type: "image/png".into(),
+///     path: PathBuf::from("thumbnail.png"),
+/// };
+/// assert_eq!(file.field_name, "file");
+/// ```
 #[derive(Debug)]
 pub struct MultipartFile {
     /// Form field name.
@@ -71,6 +113,21 @@ pub struct MultipartFile {
 }
 
 /// Complete runtime-neutral HTTP request.
+///
+/// ```
+/// use http::{HeaderMap, Method};
+/// use streamable::transport::{Body, Request};
+/// use url::Url;
+///
+/// let request = Request {
+///     method: Method::GET,
+///     url: Url::parse("https://example.com/video")?,
+///     headers: HeaderMap::new(),
+///     body: Body::Empty,
+/// };
+/// assert_eq!(request.method, Method::GET);
+/// # Ok::<(), url::ParseError>(())
+/// ```
 #[derive(Debug)]
 pub struct Request {
     /// HTTP method.
@@ -84,6 +141,19 @@ pub struct Request {
 }
 
 /// Complete buffered HTTP response.
+///
+/// ```
+/// use bytes::Bytes;
+/// use http::{HeaderMap, StatusCode};
+/// use streamable::transport::Response;
+///
+/// let response = Response {
+///     status: StatusCode::OK,
+///     headers: HeaderMap::new(),
+///     body: Bytes::from_static(b"true"),
+/// };
+/// assert_eq!(response.status, StatusCode::OK);
+/// ```
 #[derive(Debug)]
 pub struct Response {
     /// HTTP status.
@@ -95,11 +165,34 @@ pub struct Response {
 }
 
 /// Runtime-independent HTTP executor.
+///
+/// ```no_run
+/// use http::StatusCode;
+/// use streamable::transport::{HttpTransport, Request};
+///
+/// async fn status<T: HttpTransport>(
+///     transport: &T,
+///     request: Request,
+/// ) -> Result<StatusCode, T::Error> {
+///     Ok(transport.execute(request).await?.status)
+/// }
+/// ```
 pub trait HttpTransport: Send + Sync {
     /// Error returned when a request cannot be executed.
     type Error: Error + Send + Sync + 'static;
 
     /// Executes one HTTP request.
+    ///
+    /// ```no_run
+    /// use streamable::transport::{HttpTransport, Request, Response};
+    ///
+    /// async fn send<T: HttpTransport>(
+    ///     transport: &T,
+    ///     request: Request,
+    /// ) -> Result<Response, T::Error> {
+    ///     transport.execute(request).await
+    /// }
+    /// ```
     fn execute(
         &self,
         request: Request,

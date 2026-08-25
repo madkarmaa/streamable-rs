@@ -622,6 +622,11 @@ pub struct CollectionSummary {
 /// The service does not include a total in this response. Use
 /// [`StreamableClient::count_collections`](crate::StreamableClient::count_collections) when a
 /// separate total is needed.
+///
+/// ```
+/// let page = streamable::models::CollectionPage { collections: Vec::new() };
+/// assert!(page.collections.is_empty());
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectionPage {
     /// Collection summaries in service order.

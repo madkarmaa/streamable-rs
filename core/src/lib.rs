@@ -47,6 +47,13 @@ pub mod models;
 pub mod response;
 
 /// Runtime-neutral HTTP transport contract and default reqwest adapter.
+///
+/// ```
+/// use streamable::transport::Body;
+///
+/// let body = Body::Empty;
+/// assert!(matches!(body, Body::Empty));
+/// ```
 pub mod transport;
 
 /// Small helpers used by the client.
