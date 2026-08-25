@@ -1,6 +1,7 @@
 # Streamable dashboard More menu: Captions
 
 Implementation status: **Not implemented in `streamable-rs`.**
+Client access contract: **Authenticated clients only.**
 
 Captured 2026-08-13 from the authenticated Streamable dashboard, production
 source maps, Chrome DevTools network inspection, and comparison with the
