@@ -38,11 +38,38 @@ The user strongly prefers atomic, behavior-specific commits. Do not bundle unrel
 
 When a change can be understood and reverted independently, it should usually stand independently.
 
+## Maintainer taste
+
+Prefer evidence over intuition, small explicit APIs over clever machinery, and designs whose correct behavior is unsurprising. The service is undocumented, so simplicity means making observed constraints visible rather than hiding them behind broad abstractions.
+
+Fight scope creep, but do not compress a change into the wrong layer merely to keep the diff small. Reuse an existing owner when it fits; introduce a new abstraction only when it makes the protocol or lifecycle clearer.
+
+Most of this document describes strong defaults. The user's current explicit direction can override process, order, and scope. Rules about live requests, credentials, destructive actions, and published history are hard safety boundaries: crossing them requires explicit authorization rather than inference.
+
 ## Before you start
 
 The repository uses a generated repository dump as working context.
 
 If the repository-root `dump/` directory does not exist, run the repository-root `dump.py` before normal project work. Do not regenerate an existing dump merely because it exists unless the current task actually requires a fresh one.
+
+## How it works
+
+`StreamableClient<State, T>` combines authentication typestate with a runtime-neutral `HttpTransport`. Request models implement the crate-private `ApiRequest` contract; the client resolves routing, serializes the request, manages cookies, sends it through the transport, and maps the response into endpoint-specific models and errors.
+
+Uploads have an explicit lifecycle. Shortcode allocation returns a `VideoUpload`; completion initializes metadata, streams the file to S3, and requests transcoding. A retained `VideoUploadHandle` keeps remote cancellation available when a runtime drops the completion future.
+
+The CLI is a thin consumer of `core/`. Protocol behavior belongs in the library rather than being reimplemented in `cli/`.
+
+## Where code lives
+
+- `core/src/client/` — typestate client, shared request pipeline, public operations, and client tests.
+- `core/src/models/` — public data models plus exact request/response wire models.
+- `core/src/transport/` — runtime-neutral HTTP types and the optional reqwest transport.
+- `core/src/response/` — shared response decoding.
+- `core/src/utils/` — file inspection and S3 signing.
+- `core/src/errors.rs` — domain and transport failures.
+- `cli/src/main.rs` — the small command-line consumer.
+- `.agents/memories/` — durable verified project knowledge, not task notes.
 
 ## Browser work
 
@@ -59,7 +86,7 @@ Keep user-facing README and rustdoc text short and plain. Remove repeated setup,
 
 Give every public module, type, and callable item a small usage example. Keep field and variant descriptions to one clear sentence, and use the parent type's example to show how those parts fit together.
 
-## Debugging and sensitive protocol values
+## Hard boundary: debugging and sensitive values
 
 Concentrate debug instrumentation at the existing shared request pipeline, response decoder, transport, file-inspection, upload, signing, and rollback seams instead of duplicating it in each endpoint method.
 
@@ -109,7 +136,7 @@ The protocol is not limited to memories. Add other spec-compliant project-local 
 
 Keep them minimal, purposeful, portable, and friendly to version control.
 
-## The dangerous part: remote tests
+## Hard boundary: remote tests
 
 Normal tests must never contact Streamable, create accounts, mutate labels, upload files, or otherwise send requests to the live service.
 
@@ -151,35 +178,17 @@ When using WireMock or an equivalent mock server, verify the effective protocol 
 
 Mocks should protect observed API behavior, not merely prove that some request was sent.
 
-## Error handling
+## Adding API behavior
 
-Preserve endpoint-specific domain errors already established by the Rust client.
+Start with the observed wire contract: endpoint, method, payload, aliases, authentication, success shape, and status/error behavior. Fixed protocol details stay inside the client rather than leaking into the public API.
 
-When adding a new endpoint:
+A complete feature normally includes the request, response, and error models; deterministic mock coverage for the meaningful wire behavior and mapped statuses; the smallest implementation at the owning layer; targeted tests and Clippy; bounded feature-gated remote evidence when practical; and the full validation gate before completion.
 
-1. identify the relevant status/error behavior
-2. add deterministic local coverage for mapped statuses
-3. make the Rust failure mode explicit
-4. avoid broad catch-all behavior unless compatibility requires it
+Preserve established endpoint-specific domain errors and make new failure modes explicit. Broad catch-all errors are a compatibility tool, not a default.
 
-## Adding a new API feature
+That order is a working default. If the user specifies an implementation, validation, or commit sequence, follow it exactly.
 
-Unless the user gives a different order, use this sequence:
-
-1. identify the exact endpoint, method, payload, aliases, success shape, and error mapping
-2. determine whether authentication is required
-3. design the Rust API so fixed protocol details stay internal
-4. add request/response/error models
-5. add deterministic local/mock tests
-6. implement the behavior
-7. run targeted tests and Clippy
-8. add bounded feature-gated remote coverage when practical
-9. run the full validation gate
-10. if asked to commit, create behavior-specific atomic commits
-
-If the user specifies an implementation, validation, or commit order, follow that order exactly instead of batching the feature first.
-
-## Verifying work
+## Verifying
 
 For Rust changes, start with the smallest targeted tests that exercise the change, then run the full quality gate before declaring the work complete.
 
@@ -200,19 +209,13 @@ cargo test --workspace --features DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER
 
 Do not run it casually. It is intentionally side-effecting and only appropriate when remote verification is explicitly warranted.
 
-## Git discipline
+## Git and work history
 
-Treat commits as part of the implementation loop, not as a final cleanup step. While working on a task, commit each coherent change as soon as it is complete and validated, then continue with the next change. Work as a developer would on a WIP PR: the branch should accumulate a sequence of small, understandable commits that reflect the actual progression of the work.
+Treat commits as part of the implementation loop. The branch should read like a WIP PR: each completed, validated behavior lands as a small commit before work moves to the next independent concern.
 
-Do not wait until the entire task is finished and bundle everything into one commit. Do not leave multiple independently meaningful completed changes uncommitted while moving on to later work.
+One concern per commit. Separate dependencies, implementation, ignore rules, refactors, and unrelated fixes whenever they can be understood and reverted independently; split individual hunks when that is the clearest boundary.
 
-For each change:
-
-1. partition work by externally observable behavior
-2. separate dependencies, implementation, ignore rules, refactors, and unrelated fixes when independently meaningful
-3. split to individual hunks when needed
-4. validate the completed change before committing it
-5. before every commit, inspect:
+Before every commit, inspect exactly what is staged:
 
 ```sh
 git diff --cached --stat
@@ -220,19 +223,13 @@ git diff --cached
 git diff --cached --check
 ```
 
-6. make sure the commit can be understood and reverted independently
-
-Do not make one broad commit simply because all changes belong to the same task.
-
-If an existing commit is too broad, prefer a soft undo and repartition:
+If an existing commit is too broad, a soft undo is the preferred way to repartition unpublished work:
 
 ```sh
 git reset --soft HEAD^
 ```
 
-Generated verification or rollback artifacts under `.codex/` stay untracked/ignored unless the user explicitly asks to commit them.
-
-Never push or rewrite published history unless the user explicitly asks.
+Generated verification or rollback artifacts under `.codex/` stay untracked or ignored unless the user explicitly asks to commit them. Never push or rewrite published history unless the user explicitly asks.
 
 ## When instructions disagree
 
