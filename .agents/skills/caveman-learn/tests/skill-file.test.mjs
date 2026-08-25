@@ -52,6 +52,34 @@ test('SKILL.md covers the cavemem_offload move', () => {
     );
 });
 
+test('SKILL.md closes the longitudinal outcome loop honestly', () => {
+    assert.match(
+        skill,
+        /caveman learn applied\s+<sink_id>/,
+        'must record a fix only after it passes re-measurement'
+    );
+    assert.match(
+        skill,
+        /improved,\s+unchanged, regressed, or insufficient_data/,
+        'must name every longitudinal verdict'
+    );
+    assert.match(
+        skill,
+        /Present regressed honestly and offer\s+the exact revert path/,
+        'must disclose regressions and offer reversal'
+    );
+    assert.match(
+        skill,
+        /caveman learn simulate <sink_id>/,
+        'may show counterfactual history before a proposal'
+    );
+    assert.match(
+        skill,
+        /sums over scanned history and never projects\s+forward/,
+        'must not project simulation results'
+    );
+});
+
 test('SKILL.md never turns a behavioral finding into an imperative', () => {
     for (const banned of [
         "you don't need",
