@@ -1,77 +1,14 @@
-## Project
+# Streamable
 
-Streamable's API is undocumented, so exact wire behavior matters more than assumptions based on endpoint naming or conventional REST behavior.
+`streamable` is a Rust client for Streamable's undocumented API, with the library in `core/` and the CLI in `cli/`.
 
-Repository layout:
+The API is undocumented. Exact wire behavior matters more than assumptions based on endpoint names, REST conventions, or what the service _should_ do. When the implementation, fixtures, and live service disagree, treat that disagreement as useful evidence rather than smoothing it over.
 
-- `core/` — library crate (`streamable`)
-- `cli/` — CLI crate
+## What matters most
 
----
+### 1. Preserve observed protocol behavior
 
-## Agent bootstrap
-
-These steps are mandatory before normal project work:
-
-1. **Ensure the repository dump exists.** If the repository-root `dump/` directory is missing, run the repository-root `dump.py` before proceeding. Do not regenerate `dump/` merely because it exists unless the current task requires it.
-
----
-
-## Browser automation
-
-When a task requires interacting with Chrome, inspecting a live page, reproducing browser behavior, or using browser developer tooling:
-
-1. **Use the runtime's built-in Chrome/browser-control API first.** Prefer the built-in browser automation path for normal navigation, interaction, inspection, and verification.
-2. **Fall back to the `chrome-devtools` MCP only if the built-in browser API fails, is unavailable, cannot attach to the required page/session, or lacks a capability needed for the task.**
-3. Do not skip directly to the MCP unless the user explicitly requests it or the task is known to require a DevTools-only capability that the built-in API cannot provide.
-4. When falling back after a partial browser action, inspect the current state before repeating actions. Avoid duplicating submissions, mutations, uploads, account changes, or other side effects.
-
----
-
-## `.agents` protocol and persistent memories
-
-Treat the repository-local `.agents/` directory as version-controlled, portable agent state and follow the `.agents` protocol for its structure and file formats.
-
-### Memory maintenance
-
-During and after project work, maintain durable project knowledge under `.agents/memories/` when new information is worth carrying into future sessions.
-
-Memory entries should capture reusable facts such as:
-
-- architectural or protocol decisions;
-- verified behavior and invariants;
-- recurring implementation or testing pitfalls;
-- user/project workflow preferences;
-- discoveries that would otherwise need to be rediscovered.
-
-Do not turn memories into a transcript or duplicate short-lived task state. Update an existing relevant memory instead of creating overlapping entries when practical.
-
-**Portability is mandatory.** Memories must remain repository- and platform-portable:
-
-- never store absolute/full filesystem paths;
-- never store usernames, home directories, drive letters, host-specific locations, current working directories, or similar environment data;
-- never store local machine configuration, transient environment details, secrets, credentials, tokens, or other host-specific state;
-- when a file reference is useful, prefer a repository-relative reference;
-- describe commands and behavior in a platform-neutral way when possible;
-- do not encode assumptions that only hold for one developer's checkout or operating system unless that platform dependency is itself part of the project's intentional contract.
-
-After memories are updated, commit the memory changes in a dedicated commit with the exact subject:
-
-`chore(agents): update memories`
-
-This memory commit is an explicit exception to the general rule that commits are only made when the user asks: once project memories have been updated, commit them. Keep unrelated source changes out of this commit.
-
-### Other `.agents` artifacts
-
-The `.agents` protocol permits more than memories. Add other project-local, spec-compliant agent artifacts when they materially improve future work, including skills, agent definitions, tasks, prompts/configuration, or other structures supported by the current specification.
-
-Apply the same portability rule to those artifacts: avoid machine-specific state, absolute paths, secrets, and unnecessary environment assumptions. Keep additions minimal, purposeful, and version-control friendly.
-
----
-
-## Operating principles
-
-The API is undocumented and can drift.
+Streamable can drift, and undocumented behavior is part of the contract we are reverse-engineering.
 
 Treat these as candidates for live revalidation when integration behavior matters:
 
@@ -82,9 +19,119 @@ Treat these as candidates for live revalidation when integration behavior matter
 - upload/S3 behavior
 - undocumented error responses
 
-Do not revalidate by sending live requests during ordinary/default tests. Live checks must follow the remote-test policy below.
+Do not turn ordinary tests into live probes. Remote verification follows the explicit remote-test policy below.
 
----
+### 2. Keep the core deterministic
+
+Normal tests are offline. Client/API behavior should be reproducible against mocks without needing Streamable, an account, uploaded files, or other live state.
+
+For each practical API/client feature, aim for two layers of coverage:
+
+- deterministic local/mock coverage
+- the smallest practical feature-gated remote test
+
+Rate-limit tests, intentionally abusive cases, and side effects that cannot be cleaned up proportionally are local-only.
+
+### 3. Prefer small, explicit changes
+
+The user strongly prefers atomic, behavior-specific commits. Do not bundle unrelated implementation, dependency, refactor, ignore-rule, or cleanup changes merely because they were discovered during the same task.
+
+When a change can be understood and reverted independently, it should usually stand independently.
+
+## Before you start
+
+The repository uses a generated repository dump as working context.
+
+If the repository-root `dump/` directory does not exist, run the repository-root `dump.py` before normal project work. Do not regenerate an existing dump merely because it exists unless the current task actually requires a fresh one.
+
+## Browser work
+
+When a task requires Chrome, a live page, browser inspection, reproduced web behavior, or developer tooling:
+
+1. Use the runtime's built-in browser-control API first.
+2. Fall back to the `chrome-devtools` MCP only when the built-in path fails, is unavailable, cannot attach to the required page/session, or lacks a required capability.
+3. Do not skip directly to the MCP unless the user explicitly asks for it or the task is known to require a DevTools-only capability.
+4. After a partial browser action, inspect the current state before retrying. Do not accidentally duplicate submissions, uploads, mutations, account changes, or other side effects.
+
+## `.agents` is durable project memory
+
+Treat `.agents/` as portable agent state and follow the `.agents` protocol for supported structures and file formats.
+
+### Memories
+
+Maintain reusable project knowledge under `.agents/memories/` when a discovery is worth carrying into future sessions.
+
+Good memories include:
+
+- architectural or protocol decisions
+- verified behavior and invariants
+- recurring implementation or testing pitfalls
+- project workflow preferences
+- discoveries that would otherwise need to be rediscovered
+
+Do not use memories as a transcript or as storage for short-lived task state. Prefer updating an existing relevant memory over creating overlapping entries.
+
+Anything stored under `.agents/` must remain portable across machines, checkouts, users, and operating systems. In particular, memories must:
+
+- use repository-relative file references
+- avoid absolute/full filesystem paths
+- avoid usernames, home directories, drive letters, current working directories, and host-specific locations
+- avoid local machine configuration, transient environment state, secrets, credentials, and tokens
+- describe commands and behavior in a platform-neutral way when practical
+- avoid assumptions that only happen to be true on the current host
+- only encode a platform dependency when that dependency is intentionally part of the project contract
+
+After changing `.agents/memories/`, commit those memory changes separately with the exact subject:
+
+```text
+chore(agents): update memories
+```
+
+This is the standing exception to the normal rule that commits are only created when the user asks. Keep unrelated source changes out of the memory commit.
+
+### Other `.agents` artifacts
+
+The protocol is not limited to memories. Add other spec-compliant project-local artifacts—skills, agent definitions, tasks, prompts/configuration, or other supported structures—when they materially improve future work.
+
+Keep them minimal, purposeful, portable, and friendly to version control.
+
+## The dangerous part: remote tests
+
+Normal tests must never contact Streamable, create accounts, mutate labels, upload files, or otherwise send requests to the live service.
+
+The explicit opt-in feature is:
+
+```text
+DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER
+```
+
+Remote tests must be guarded with:
+
+```rust
+#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
+```
+
+For remote mutation tests:
+
+- serialize through the existing `REMOTE_TEST_LOCK`
+- make the minimum number of requests
+- do not repeatedly retry
+- retain created resources instead of issuing cleanup requests
+- send a remote `DELETE` only when deletion itself is the behavior under test, never as cleanup for another test or as a fallback after failure
+
+Never deliberately trigger remote rate limits.
+
+## Mock the wire, not your assumptions
+
+When using WireMock or an equivalent mock server, verify the effective protocol behavior that matters:
+
+- full path produced by the configured base URL
+- HTTP method
+- meaningful request bodies and exact wire names
+- bodylessness where relevant, especially `DELETE`
+- status-to-domain-error mappings
+
+Mocks should protect observed API behavior, not merely prove that some request was sent.
 
 ## Error handling
 
@@ -92,67 +139,31 @@ Preserve endpoint-specific domain errors already established by the Rust client.
 
 When adding a new endpoint:
 
-2. add deterministic local tests for mapped statuses;
-3. make the Rust failure mode explicit;
-4. avoid broad catch-all behavior unless compatibility requires it.
+1. identify the relevant status/error behavior
+2. add deterministic local coverage for mapped statuses
+3. make the Rust failure mode explicit
+4. avoid broad catch-all behavior unless compatibility requires it
 
----
+## Adding a new API feature
 
-## Testing policy
+Unless the user gives a different order, use this sequence:
 
-### Default tests must be offline
+1. identify the exact endpoint, method, payload, aliases, success shape, and error mapping
+2. determine whether authentication is required
+3. design the Rust API so fixed protocol details stay internal
+4. add request/response/error models
+5. add deterministic local/mock tests
+6. implement the behavior
+7. run targeted tests and Clippy
+8. add bounded feature-gated remote coverage when practical
+9. run the full validation gate
+10. if asked to commit, create behavior-specific atomic commits
 
-Running normal tests must not contact Streamable, create accounts, mutate labels, upload files, or otherwise send requests to the live service.
+If the user specifies an implementation, validation, or commit order, follow that order exactly instead of batching the feature first.
 
-The explicit opt-in feature is:
+## Verifying work
 
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`
-
-Remote tests must be guarded with:
-
-`#[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]`
-
-### Every practical client/API behavior gets two layers of coverage
-
-For each implemented client/API feature:
-
-1. add deterministic local/mock coverage;
-2. add the smallest practical feature-gated remote test.
-
-Exceptions:
-
-- rate-limit tests;
-- cases that would intentionally spam, burden, or repeatedly mutate the service;
-- cases where cleanup is impossible and the live side effect is disproportionate.
-
-For remote mutation tests:
-
-- serialize through the existing `REMOTE_TEST_LOCK`;
-- make the minimum number of requests;
-- do not repeatedly retry;
-- retain created resources instead of sending extra cleanup requests;
-- issue a remote DELETE only when that deletion operation is the behavior under
-  test, never as cleanup for another behavior or as a fallback after failure.
-
-Rate-limit behavior is local-only. Never deliberately trigger remote rate limits.
-
-### Mocking rules
-
-When using WireMock or an equivalent mock server:
-
-- assert the effective full path produced by the configured base URL;
-- assert HTTP method;
-- assert meaningful request bodies and wire names;
-- assert bodylessness where relevant, especially DELETE;
-- test status-to-domain-error mappings.
-
----
-
-## Validation before declaring work complete
-
-For Rust changes, run the relevant targeted tests first, then the full quality gate.
-
-Preferred full validation:
+For Rust changes, start with the smallest targeted tests that exercise the change, then run the full quality gate before declaring the work complete.
 
 ```sh
 cargo fmt --all -- --check
@@ -161,75 +172,57 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 git diff --check
 ```
 
-If a task specifically changes feature-gated remote behavior, also run the remote suite only when explicitly appropriate:
+The project uses strict Clippy settings. Run Clippy early enough that lint-driven design changes do not pile up at the end.
+
+If the task specifically changes feature-gated remote behavior, the remote suite is:
 
 ```sh
 cargo test --workspace --features DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER
 ```
 
-Do not run the remote suite casually. It is intentionally dangerous/side-effecting.
+Do not run it casually. It is intentionally side-effecting and only appropriate when remote verification is explicitly warranted.
 
-The project uses strict Clippy settings. Run Clippy early enough that lint-driven design changes do not accumulate at the end.
+## Git discipline
 
----
+Treat commits as part of the implementation loop, not as a final cleanup step. While working on a task, commit each coherent change as soon as it is complete and validated, then continue with the next change. Work as a developer would on a WIP PR: the branch should accumulate a sequence of small, understandable commits that reflect the actual progression of the work.
 
-## Git and commit discipline
+Do not wait until the entire task is finished and bundle everything into one commit. Do not leave multiple independently meaningful completed changes uncommitted while moving on to later work.
 
-The user strongly prefers atomic, behavior-specific commits.
+For each change:
 
-The `.agents` memory workflow is a standing exception to the normal "commit only when asked" rule: after updating `.agents/memories/`, create the dedicated `chore(agents): update memories` commit described above.
+1. partition work by externally observable behavior
+2. separate dependencies, implementation, ignore rules, refactors, and unrelated fixes when independently meaningful
+3. split to individual hunks when needed
+4. validate the completed change before committing it
+5. before every commit, inspect:
 
-When asked to commit:
+```sh
+git diff --cached --stat
+git diff --cached
+git diff --cached --check
+```
 
-1. partition changes by externally observable behavior;
-2. split dependencies, implementation, ignore rules, refactors, and unrelated fixes when they are independently meaningful;
-3. split down to hunks when necessary;
-4. before each commit, inspect:
-    - `git diff --cached --stat`
-    - `git diff --cached`
-    - `git diff --cached --check`
-5. ensure the commit can be understood and reverted independently.
+6. make sure the commit can be understood and reverted independently
 
-Do not make a broad commit simply because all changes belong to the same task.
+Do not make one broad commit simply because all changes belong to the same task.
 
-If a commit is too broad, prefer a soft undo such as:
+If an existing commit is too broad, prefer a soft undo and repartition:
 
-`git reset --soft HEAD^`
+```sh
+git reset --soft HEAD^
+```
 
-then repartition the staged changes.
+Generated verification or rollback artifacts under `.codex/` stay untracked/ignored unless the user explicitly asks to commit them.
 
-Generated verification/rollback artifacts under `.codex/` should remain untracked/ignored unless the user explicitly asks to commit them.
+Never push or rewrite published history unless the user explicitly asks.
 
-Do not push or rewrite published history unless the user explicitly asks.
+## When instructions disagree
 
----
+Use this order of precedence:
 
-## How to approach a new feature
+1. the user's current explicit instruction
+2. current repository behavior/tests and explicit project documentation
+3. this `AGENTS.md`
+4. historical memories
 
-For a new Streamable API/client feature, use this sequence unless the user gives a different order:
-
-2. identify exact endpoint, method, payload, aliases, success shape, and error mapping;
-3. identify whether authentication is required;
-4. design the Rust API so fixed protocol details remain internal;
-5. add request/response/error models;
-6. add deterministic local/mock tests;
-7. implement the behavior;
-8. run targeted tests and Clippy;
-9. add bounded feature-gated remote coverage when practical;
-10. run full formatting/tests/Clippy/diff checks;
-11. if asked to commit, create behavior-specific atomic commits.
-
-When the user specifies an implementation/validation/commit order, follow that order exactly rather than batching the whole feature set first.
-
----
-
-## Priority when instructions conflict
-
-Use this precedence:
-
-1. the user's current explicit instruction;
-2. current repository behavior/tests and explicit project documentation;
-3. this `AGENTS.md`;
-4. historical memories.
-
-If an undocumented live API contradicts the remembered contract, report the discrepancy and update tests/behavior only in line with the user's requested compatibility goal.
+If the undocumented live API contradicts the remembered contract, report the discrepancy. Only update behavior/tests in line with the compatibility goal the user actually requested.
