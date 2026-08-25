@@ -40,9 +40,9 @@ and returns `VideoUpload` without calling `/initialize`. `VideoUpload` is
 `VideoUpload::complete` initializes the upload, streams the file through the
 configured transport, and requests transcoding.
 
-Applications cancel an in-flight completion future through their runtime and
-retain a `VideoUploadHandle` for explicit cleanup. `VideoUpload::cancel` consumes
-an allocated upload, while `VideoUpload::handle` keeps cleanup available when
+Runtime-level cancellation drops the in-flight completion future. A retained
+`VideoUploadHandle` provides explicit cleanup; `VideoUpload::cancel` consumes an
+allocated upload, while `VideoUpload::handle` keeps cleanup available when
 another task owns the completion future.
 
 After shortcode allocation, library-detected failures attempt one bodyless

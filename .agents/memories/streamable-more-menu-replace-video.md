@@ -230,9 +230,8 @@ POST /api/v1/log
 {"message":"Unknown Error","version":"unknown"}
 ```
 
-It returned HTTP 204. The replacement source does not make this request part of
-the required protocol, so a future Rust implementation should not reproduce it
-as a functional step.
+It returned HTTP 204. The replacement source treats this request as telemetry,
+not as a functional protocol step.
 
 ## Step 4: poll the allocated version
 
@@ -286,8 +285,8 @@ preserved while the irreversible version counter advanced. After completion:
 - final media dimensions, duration, and size matched the selected replacement.
 
 This confirms that Replace video is a versioned media-body replacement, not a
-general video-metadata overwrite. Fixed card customizations should not be
-resent in the transcode payload.
+general video-metadata overwrite. Fixed card customizations were absent from the
+observed transcode payload.
 
 ## UI and failure state
 
@@ -314,57 +313,11 @@ Metadata, S3 setup, or orchestration failure:
 5. logs the message;
 6. can open the storage-plan upsell when a target plan is available.
 
-The product copy calls replacement permanent. There is no cleanup endpoint in
-this flow that decrements `max_version`, so remote tests should use
-content-equivalent data or a disposable video rather than claiming rollback of
-the version counter.
+The product copy calls replacement permanent. No cleanup endpoint in this flow
+decrements `max_version`; the observed version increment has no rollback path.
 
-## Python parity and future Rust API
+## Python parity
 
 The sibling Python implementation has the new-upload flow but no Replace video
-operation. The Rust client already has reusable AWS signing/upload machinery
-for new uploads, but replacement must not call the normal shortcode or
-initialize endpoints.
-
-A future Rust orchestration can be modeled as:
-
-```text
-request_video_replacement(shortcode, size)
-upload_replacement_bytes(metadata, file)
-start_replacement_transcode(metadata)
-poll_video_version(shortcode, version)
-replace_video(shortcode, file)
-```
-
-Preserve response-provided key, version, token, bucket, credentials, clock
-time, acceleration choice, `options`, and `transcoder_options` as opaque wire
-data. Redact them from logs and errors. Reuse the existing cancellation token
-for the S3 stage, and make it explicit that cancellation after the transcode
-request cannot restore the prior version.
-
-## Deterministic test targets
-
-Local coverage should verify:
-
-1. invalid MIME, count, size, and duration fail before network access;
-2. metadata uses GET on
-   `/api/v1/uploads/<shortcode>/replace?size=<bytes>` with no extra query;
-3. no shortcode-generation or initialize request occurs;
-4. missing metadata shortcode produces a typed error before S3;
-5. the exact file bytes go to the returned bucket/key with AWS headers;
-6. transcode body merges `options` and response transcode options with the
-   correct precedence;
-7. transcode includes allocated `version`, `size`, `key`, `token`, `preset`,
-   `shortcode`, and `screenshot` wire names;
-8. polling uses `/videos/<shortcode>?version=<allocated-version>`;
-9. completion accepts `status:2` and preserves unrelated video fields;
-10. HTTP 429 and JSON-message failures map to explicit replacement errors;
-11. cancellation stops S3 work and makes no later transcode request;
-12. temporary credentials, tokens, signatures, policies, and signed URLs are
-    absent from formatted diagnostics.
-
-Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, serialize through
-`REMOTE_TEST_LOCK`, use a disposable video or content-equivalent replacement,
-make one replacement, and prove the final allocated version without claiming
-that the version increment was rolled back.
+operation. Replacement uses its own metadata route and does not use the normal
+shortcode-allocation or initialize endpoints.

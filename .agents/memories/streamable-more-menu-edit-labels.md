@@ -130,8 +130,8 @@ Important current UI details:
 - the client augments the response with local `count: 0`;
 - the new label is merged into the selection as `checked: true` and
   `indeterminate: false`;
-- creation alone does not assign the label to the video; the user must still
-  save the modal.
+- creation alone does not assign the label to the video; assignment occurs only
+  when the modal is saved.
 
 For an HTTP 4xx response, the client reads the JSON `message` and displays it.
 For other non-success statuses it displays
@@ -249,35 +249,5 @@ disposable video, creates one disposable label, assigns it, and retains both
 resources. A separate remote lifecycle creates and renames one label. Both are
 compiled by the all-features Clippy gate but are not run by default.
 
-Bulk assignment can be built above the single-video primitive. If it mirrors
-the dashboard, document that it is non-transactional: successful videos remain
-changed when another video's request fails. A Rust bulk API should return
-per-shortcode results rather than collapsing partial failure into a generic
-error string.
-
-Do not infer menu visibility solely from authentication. The web UI also
-depends on feature state and whether at least one label exists.
-
-## Deterministic test targets
-
-Local mock coverage should verify:
-
-1. method and effective path are exactly POST and
-   `/api/v1/videos/<shortcode>/labels`;
-2. the session cookie is present;
-3. the JSON body contains only `labels`;
-4. IDs retain caller order during serialization;
-5. an empty slice serializes as `{"labels":[]}`;
-6. HTTP 200 with an empty body succeeds;
-7. a non-success response maps to an explicit assignment error without
-   requiring a JSON body;
-8. create-label remains a separate POST to `/api/v1/labels` with a `name`
-   field;
-9. a bulk helper preserves per-video success/failure results and makes no
-   rollback claim.
-
-Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use a disposable authenticated
-account and video, serialize mutations through `REMOTE_TEST_LOCK`, make the
-minimum mutations, and retain created resources and assigned labels rather than
-sending cleanup DELETE requests.
+Menu visibility depends on authentication, feature state, and the existence of
+at least one label.

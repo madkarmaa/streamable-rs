@@ -15,9 +15,8 @@ limited to the feature-flag fetch, consumption, and local override workflow.
   current-user state.
 - Flag values are typed configuration, not only booleans. The observed response
   contained booleans plus strings, a number, and an object.
-- The live list is service-controlled and can drift. Consumers should enumerate
-  the keys returned by the API rather than maintain a supposedly complete static
-  list.
+- The live list is service-controlled and can drift. The returned keys are the
+  authoritative set; a static list is not complete protocol evidence.
 
 ## Observed list shape
 

@@ -92,8 +92,8 @@ Display-name behavior is unusual:
 
 Because non-`Default` labels return before fallback, an absent label can render
 blank rather than the language code. Duplicate language entries also produce
-duplicate React keys. A future API model should preserve both server fields and
-not treat this UI formatting as the wire contract.
+duplicate React keys. Both server fields are independent wire data; the UI
+formatting does not redefine them.
 
 ## Add caption track is not implemented in this bundle
 
@@ -108,10 +108,8 @@ GET    /videos/<shortcode>/captions
 DELETE /videos/<shortcode>/captions/<caption-id>
 ```
 
-There is no source-backed POST/PUT endpoint in this bundle. Future Rust work
-must not infer an upload path from the inert button or neighboring routes. Add
-support only after a newer UI bundle or live enabled account provides wire
-evidence.
+There is no source-backed POST/PUT endpoint in this bundle. The inert button and
+neighboring routes provide no evidence of an upload path.
 
 ## Delete confirmation flow
 
@@ -180,8 +178,8 @@ There is a current frontend error-detail bug: because the delete helper requests
 text handling, it reads the JSON error body as a string and then attempts
 `payload.message`. The string has no `message` property, so the specific
 `Not Found` message is discarded before the saga emits the generic visible
-error. A future Rust implementation should parse structured errors when the
-response content type is JSON even though successful deletion is bodyless.
+error. The structured JSON error and bodyless success are distinct observed
+response shapes.
 
 ## Live verification summary
 
@@ -198,45 +196,12 @@ The authenticated disposable video provided these observations:
 No concrete shortcode, caption ID, cookie, locale record, or account field is
 durable project state.
 
-## Python parity and future Rust API
+## Rust scope evidence
 
 The sibling Python implementation has no caption-list, caption-delete, or
-caption-upload operation. Current verified Rust scope should therefore remain
-limited to the two observed operations:
+caption-upload operation. The verified wire surface contains only authenticated
+list and delete operations.
 
-```text
-list_video_captions(shortcode)
-delete_video_caption(shortcode, caption_id)
-```
-
-Model list responses with a `captions` envelope and preserve unknown fields for
-forward compatibility. Treat caption ID and language as independent; the
-delete route uses ID, while language is only display metadata.
-
-Do not add `upload_video_caption` from the present evidence. The visible add
-button is inert, and no upload wire behavior exists in the inspected bundle.
-
-## Deterministic test targets
-
-Local mock coverage should verify:
-
-1. listing uses GET on `/api/v1/videos/<shortcode>/captions`;
-2. the authenticated cookie and cache-control headers are present;
-3. `{"captions":[]}` and populated envelopes deserialize correctly;
-4. caption ID, language, label, and unknown fields are preserved as designed;
-5. deletion uses bodyless DELETE on
-   `/api/v1/videos/<shortcode>/captions/<caption-id>`;
-6. HTTP 204 succeeds without text or JSON decoding;
-7. successful deletion can be followed by one list refetch;
-8. JSON error bodies are parsed even when the success type is empty/text;
-9. HTTP 404 maps to an explicit missing-caption error rather than a blank
-   message;
-10. no upload endpoint is emitted by current code;
-11. a false exposure flag means no frontend menu item but does not alter the
-    underlying endpoint paths.
-
-Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, serialize mutations through
-`REMOTE_TEST_LOCK`, use an existing disposable caption only when cleanup is
-already known, and otherwise limit live coverage to listing plus a single
-non-mutating missing-ID delete check.
+List responses use a `captions` envelope. Caption ID and language are independent
+server fields: deletion addresses the ID, while language is display metadata.
+The inspected bundle provides no caption-upload contract.

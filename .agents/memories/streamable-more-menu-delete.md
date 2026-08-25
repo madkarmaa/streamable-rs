@@ -78,23 +78,3 @@ Cookie: <cookies held by the client, if any>
   succeeded; there is no transactional rollback.
 - The flagged-video `Dismiss` action calls the same delete thunk without this
   confirmation modal.
-
-## Rust parity guidance
-
-- The inspected sibling Python client has no video-delete method to copy. Treat
-  the observed dashboard request as the current parity reference.
-- A Rust method should live on the generic client state, keep the fixed path
-  internal, accept a shortcode, preserve available cookies, send a bodyless
-  `DELETE`, and expose a typed failure when the response text is not exactly
-  `true`.
-- Deterministic mock coverage should assert the full effective path, method,
-  bodylessness, unauthenticated availability, cookie behavior, literal `true`
-  success, and failures for `false`, `"true"`, empty `204`, transport errors, and
-  ordinary error statuses.
-- Client-state tests should separately cover retaining the item while deletion is
-  pending, successful cache/list removal, label-count adjustment, failure
-  retention, local-id removal, and partial-success bulk behavior.
-- Any remote test must remain behind
-  `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use `REMOTE_TEST_LOCK`, create one
-  disposable video in the unauthenticated client state, issue one delete, and
-  verify the resulting Not Found state.

@@ -24,8 +24,7 @@ GET https://dashboard.streamable.com/videos/<shortcode>/analytics
 ```
 
 Observed response: HTTP 200 HTML, powered by Next.js. The request included the
-normal `.streamable.com` session cookie because the iframe is same-site. Do not
-persist or log that cookie.
+normal `.streamable.com` session cookie because the iframe is same-site.
 
 ## Current analytics summary flow
 
@@ -123,9 +122,10 @@ The summary error body was:
 }
 ```
 
-The iframe displayed `Error while loading analytics data`. Treat this as a
-live guest-account observation, not a stable contract for authenticated or paid
-accounts. The live counter endpoint still succeeded for the same guest video.
+The iframe displayed `Error while loading analytics data`. This is a live
+guest-account observation rather than a stable contract for authenticated or
+paid accounts. The live counter endpoint still succeeded for the same guest
+video.
 
 ## Legacy analytics route
 
@@ -155,17 +155,10 @@ details internal, send bodyless GET requests, and preserve the status and server
 message in endpoint-specific errors. There is no background polling helper;
 callers choose if and when to repeat the live call.
 
-## Deterministic test targets
+## Coverage
 
-Local mock coverage should verify:
-
-1. `GET /api/v1/videos/<shortcode>/analytics` uses no request body;
-2. `GET /api/v1/videos/<shortcode>/analytics/live` uses no request body;
-3. `{ "count": 0 }` deserializes without treating zero as missing;
-4. non-2xx summary responses preserve status and server message;
-5. any legacy API added later uses the exact `ajax.streamable.com` paths above.
-
-Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`. The current remote test uploads one
-small video, leaves it in the shared test account, and performs one live-view
-GET. It does not rely on the guest HTTP 500 remaining stable.
+Deterministic tests cover bodyless GETs on both analytics paths, zero live-view
+counts, and endpoint-specific errors that preserve status and server message.
+The feature-gated remote test uploads one small video, leaves it in the shared
+test account, and performs one live-view GET without relying on the guest HTTP
+500 remaining stable.

@@ -13,21 +13,21 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 - Three observed account flags related to this feature were enabled:
   `expose-collections-menu-link`, `collections-enable-edit-mode`, and
   `collections-enable-sort-videos-modal`. The service controls these flags, so
-  clients must not assume that every account receives every collection UI.
+  their presence on one account does not establish universal availability.
 - The collection index is server rendered. Its document request is
   `GET /collections`; the observed response was HTTP 200 with
   `Cache-Control: no-cache, no-store, must-revalidate`.
 - The linked help article, **How to create and share a collection**, currently
-  leads to a missing Zendesk article. Treat the inspected application and live
-  wire behavior as the usable reference.
+  leads to a missing Zendesk article. The inspected application and live wire
+  behavior are the available reference.
 
 ## Authentication and common request behavior
 
 - Collection API requests use the authenticated browser session with
   `credentials: "include"`.
 - The live API path prefix is `/api/v1`. Browser requests observed the deployed
-  API host selected by the application; client implementations should keep the
-  host configurable and preserve the path contract below.
+  API host selected by the application. The Rust client keeps the host
+  configurable while preserving the path contract below.
 - Requests send `Content-Type: application/json`, `Pragma: no-cache`, and
   `Cache-Control: no-cache`. JSON request fields whose values are `undefined`
   are omitted by `JSON.stringify`.
@@ -155,8 +155,8 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 
 - The page subsequently obtains each embedded player's data from
   `GET /api/v1/videos/<video-shortcode>/player`. The inspected render issued two
-  player requests per video; do not rely on that duplicate as a protocol
-  requirement.
+  player requests per video. The duplication is a UI artifact rather than a
+  protocol requirement.
 - Owner view exposes **Edit** and **Get link**. The content area shows the
   collection title, playable video cards, each video's title and view count, an
   ad/upgrade area, and the collection footer.
@@ -269,30 +269,18 @@ create, list, view, share, edit, sort, manage, and delete subfeatures.
 - The modal stays loading and cannot be closed while deletion is pending. A
   failure clears loading, closes the delete state, and shows a failure toast.
 
-## Parity and future Rust implementation notes
+## Rust implementation and coverage
 
 - The sibling Python project has no collection API implementation. Its unrelated
   use of “collection” describes the labels model and is not a parity reference
   for this feature.
-- For a Rust client, model collection summary and collection detail responses
-  separately: list summaries include timestamps and a signed thumbnail, while
-  detail includes ownership/branding fields and dated video entries. Create and
-  PATCH responses are smaller collection snapshots.
-- Preserve ordered `shortcodes` in create and update models. Title-only PATCHes
-  must omit `shortcodes`; membership PATCHes must omit `title` and replace the
-  full ordered membership.
-- Deterministic tests should assert methods, full `/api/v1` paths, query strings,
-  JSON field omission, ordered arrays, empty-body DELETE success, and status/error
-  mapping. Any live coverage must remain behind
-  `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use `REMOTE_TEST_LOCK`, make one
-  collection from bounded fixtures, delete it as the deletion behavior under
-  test, and retain the member videos without fallback cleanup DELETE requests.
-
-## Live verification cleanup
-
-- Inspection used two temporary remote-URL video fixtures and disposable
-  collections.
-- Both collections were deleted. Count and list were verified empty afterward.
-- Both temporary videos were then deleted; each video DELETE returned HTTP 200
-  with literal body `true`, and a final title-filtered list found zero remaining
-  fixtures.
+- The Rust client models collection summaries, details, and create/PATCH
+  snapshots separately. Summaries include timestamps and a signed thumbnail;
+  details include ownership, branding, and dated video entries.
+- Create and membership-update models preserve shortcode order. Title-only
+  PATCHes omit `shortcodes`; membership PATCHes omit `title` and replace the full
+  ordered membership.
+- Deterministic tests cover methods, full `/api/v1` paths, query strings, JSON
+  omission, ordered arrays, empty-body DELETE success, and status/error mapping.
+  Feature-gated remote lifecycles verify creation, ordered membership, updates,
+  deletion, and preservation of member videos.

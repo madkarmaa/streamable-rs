@@ -372,26 +372,3 @@ error branches. A feature-gated remote test updates one disposable video to
 private, refreshes it, and retains it in that state; it is compiled by
 all-features Clippy but not run by default. Reset behavior remains covered by
 deterministic local tests rather than an extra cleanup DELETE.
-
-## Deterministic test targets
-
-Local mock coverage should verify:
-
-1. each update uses PATCH on the full
-   `/api/v1/videos/<shortcode>/settings` path;
-2. JSON/cache-control headers are present, and unauthenticated clients do not
-   require an authentication cookie;
-3. a single-field change serializes only that field;
-4. `hidden_on_streamable` is preserved as an exact wire value;
-5. password removal serializes JSON null;
-6. reset uses bodyless DELETE on the same path;
-7. HTTP 204 succeeds without JSON decoding;
-8. the optional refresh performs GET `/api/v1/videos/<shortcode>` after a
-   successful mutation and not after a failed mutation;
-9. a non-success JSON `message` maps to an explicit per-video privacy error;
-10. account-level `/me/settings` behavior remains unchanged.
-
-Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use a disposable video, serialize
-through `REMOTE_TEST_LOCK`, make the minimum mutations, and retain the resulting
-resource and state unless the reset DELETE is itself the behavior under test.

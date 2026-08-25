@@ -111,8 +111,8 @@ part of the observed contract. Expiry, key-pair, and signature query values are
 ephemeral.
 
 Although the observed browser request was HTTP 200, the server advertises byte
-ranges. A non-browser download API should accept both 200 and 206 and stream
-the body instead of buffering a potentially large file.
+ranges. HTTP 200 and 206 are both compatible with this behavior, and the body is
+suitable for streaming rather than buffering as one large value.
 
 ## MP4 URL behavior
 
@@ -137,7 +137,7 @@ link preset; it remains `/mp4.mp4`.
 Plan gating uses JavaScript truthiness of `me.plan`:
 
 - any truthy plan: write the stable URL with `navigator.clipboard.writeText`;
-- no plan: do not touch the clipboard and open an upgrade modal.
+- no plan: the clipboard remains unchanged and an upgrade modal opens.
 
 On successful clipboard write, button text changes from `MP4 URL` to `Copied`
 for three seconds. If the Clipboard API is unavailable, the helper logs
@@ -178,52 +178,7 @@ The authenticated ready video exercised these branches:
 No downloaded bytes, signed URL, concrete shortcode, clipboard content, or
 account field is durable project state.
 
-## Python parity and future Rust API
+## Python parity
 
-The sibling Python implementation does not currently expose video file
-representations, direct download, or stable MP4 URL operations. Future Rust
-support should build on a typed full-video response rather than add a guessed
-download endpoint.
-
-A useful Rust surface is:
-
-```text
-list_video_files(shortcode)
-download_video_file(shortcode, preset, writer)
-stable_video_file_url(shortcode, preset)
-```
-
-`list_video_files` can fetch the video representation and return typed preset,
-status, dimensions, size, version, and opaque signed URL. `download_video_file`
-should select a ready file, GET its returned URL, accept 200/206, and stream to
-the caller's writer. `stable_video_file_url` should keep the `/l/` route
-internal and document that service-side plan enforcement can still reject or
-redirect its use.
-
-Recommended preset modeling is a closed set for known values plus an unknown
-string variant, because the undocumented service can add resolutions. Keep UI
-labels separate from wire presets; a 360p `mp4` remains wire preset `mp4` even
-when the dashboard calls it SD.
-
-## Deterministic test targets
-
-Local coverage should verify:
-
-1. file rows sort as `mp4-high`, `mp4`, `mp4-mobile` regardless of JSON order;
-2. `mp4` at height 480 or lower is labeled SD without changing the preset;
-3. decimal megabytes use size divided by 1,000,000 and one fractional digit;
-4. a non-ready file is reported as processing and cannot be downloaded;
-5. a ready direct download follows the exact opaque response URL;
-6. the CDN request sends no JSON body and accepts HTTP 200 and 206;
-7. response bytes stream unchanged to the output;
-8. signed query values are redacted from errors and diagnostics;
-9. stable links use `/l/<shortcode>/<preset>.mp4` with exact preset spelling;
-10. missing/unknown presets produce an explicit error rather than a guessed
-    CDN path;
-11. listing or closing the modal does not require a link-generation request;
-12. download behavior does not mutate the video.
-
-Any remote coverage must remain behind
-`DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`, use one small ready disposable
-video, perform at most one streamed GET, avoid persisting signed parameters,
-and make no mutation or repeated range traffic.
+The sibling Python implementation does not expose video file representations,
+direct download, or stable MP4 URL operations.

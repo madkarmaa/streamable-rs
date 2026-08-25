@@ -68,8 +68,8 @@ The page parses the persisted `thumbnail_offset` with `parseInt`:
 
 Because save code uses `state.thumbOffset || defaultOffset`, an explicitly
 selected numeric zero is treated as false and is replaced with the default
-offset. This is current UI behavior and should not be silently copied into a
-future Rust API unless strict UI parity requires it.
+offset. This permissive UI behavior is not part of the Rust API, which validates
+finite, non-negative seconds explicitly.
 
 ### Frame-save request
 
@@ -203,25 +203,3 @@ Generated CDN naming rules are not exposed as stable API, and the response's
 string offset is preserved. The Rust API validates finite, non-negative seconds
 even though the current browser time parser is permissive, while retaining
 server messages for compatibility diagnostics.
-
-## Deterministic test targets
-
-Local mock coverage should verify:
-
-1. frame selection uses PATCH on the full
-   `/api/v1/screenshots/<shortcode>` path;
-2. its JSON is exactly `{ "thumbOffset": <number> }`;
-3. custom upload uses POST on
-   `/api/v1/screenshots/<shortcode>/upload`;
-4. multipart contains one `screenshot` file part with original bytes and media
-   type;
-5. both requests carry the authenticated session cookie;
-6. HTTP 200 deserializes the returned video, including offsets `"-1"` and a
-   normal numeric string;
-7. non-success JSON `message` values map to an explicit thumbnail error;
-8. signed CDN URLs are treated as opaque response data.
-
-Remote coverage remains behind `DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER`,
-uses a disposable video, restores the frame-thumbnail branch after the custom
-upload following the observed five-second cooldown, and retains the video after
-verification instead of sending a cleanup DELETE.
