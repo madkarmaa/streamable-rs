@@ -221,11 +221,8 @@ pub enum StreamableError {
     },
 
     /// The S3 upload request could not be signed.
-    #[error("the S3 upload request could not be signed: {message}")]
-    UploadSigning {
-        /// Error message.
-        message: String,
-    },
+    #[error("the S3 upload request could not be signed")]
+    UploadSigning,
 
     /// An allocated upload failed and Streamable also rejected its cleanup request.
     #[error("video upload '{shortcode}' failed ({source}) and rollback failed ({rollback})")]
@@ -319,7 +316,7 @@ impl StreamableError {
             Self::InvalidImageFile { .. } => "invalid_image_file",
             Self::InvalidThumbnailOffset { .. } => "invalid_thumbnail_offset",
             Self::VideoThumbnailUpdateFailed { .. } => "video_thumbnail_update_failed",
-            Self::UploadSigning { .. } => "upload_signing",
+            Self::UploadSigning => "upload_signing",
             Self::UploadRollback { .. } => "upload_rollback",
             Self::UnexpectedVideoDeletionResponse { .. } => "unexpected_video_deletion_response",
             Self::Io(_) => "io",

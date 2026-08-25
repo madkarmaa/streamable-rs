@@ -33,8 +33,8 @@ pub enum S3Error {
     #[error("the AWS signing key could not be initialized")]
     InvalidSigningKey(#[source] hmac::digest::InvalidLength),
 
-    #[error("X-Amz-Credential does not contain a region: {credential}")]
-    InvalidCredential { credential: String },
+    #[error("X-Amz-Credential does not contain a region")]
+    InvalidCredential,
 
     #[error("the current UTC timestamp could not be formatted for AWS")]
     TimestampFormatting(#[source] time::error::Format),
@@ -67,7 +67,7 @@ impl S3Error {
     pub(crate) const fn kind(&self) -> &'static str {
         match self {
             Self::InvalidSigningKey(_) => "invalid_signing_key",
-            Self::InvalidCredential { .. } => "invalid_credential",
+            Self::InvalidCredential => "invalid_credential",
             Self::TimestampFormatting(_) => "timestamp_formatting",
             Self::InvalidUrl(_) => "invalid_url",
             Self::MissingUrlHost => "missing_url_host",
@@ -96,9 +96,7 @@ impl<'a> CredentialScope<'a> {
             .split('/')
             .nth(2)
             .filter(|region| !region.is_empty())
-            .ok_or_else(|| S3Error::InvalidCredential {
-                credential: credential.to_string(),
-            })?;
+            .ok_or(S3Error::InvalidCredential)?;
 
         Ok(Self { region })
     }

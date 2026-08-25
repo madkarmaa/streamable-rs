@@ -1190,9 +1190,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
                     error.kind = error.kind(),
                     "object storage request signing failed"
                 );
-                StreamableError::UploadSigning {
-                    message: error.to_string(),
-                }
+                StreamableError::UploadSigning
             })?;
 
         let endpoint = signed_put.url.clone();

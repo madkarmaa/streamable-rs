@@ -218,11 +218,12 @@ fn malformed_credential_returns_a_specific_error() {
     let mut info = upload_info();
     info.fields.x_amz_credential = "AKIDEXAMPLE/20250929".to_string();
 
-    assert!(matches!(
-        build_s3_put_at(&info, 42, "20250929T151031Z"),
-        Err(S3Error::InvalidCredential { credential })
-            if credential == "AKIDEXAMPLE/20250929"
-    ));
+    let Err(error) = build_s3_put_at(&info, 42, "20250929T151031Z") else {
+        panic!("a credential without a region should fail");
+    };
+
+    assert!(matches!(error, S3Error::InvalidCredential));
+    assert!(!error.to_string().contains("AKIDEXAMPLE"));
 }
 
 #[test]
