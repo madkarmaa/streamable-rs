@@ -1,0 +1,27 @@
+# >>> codebase-memory-mcp MCP >>>
+[mcp_servers.codebase-memory-mcp]
+command = "npx"
+args = ["-y", "codebase-memory-mcp@0.10.8"]
+env_vars = ["CBM_CACHE_DIR", "CBM_RUNTIME_DIR"]
+# <<< codebase-memory-mcp MCP <<<
+
+# >>> codebase-memory-mcp hooks >>>
+[[hooks.SessionStart]]
+matcher = "startup|resume|clear|compact"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "npx -y codebase-memory-mcp@0.10.8 hook-augment"
+command_windows = "& npx.cmd -y codebase-memory-mcp@0.10.8 hook-augment"
+timeout = 30
+
+
+[[hooks.SubagentStart]]
+matcher = "*"
+
+[[hooks.SubagentStart.hooks]]
+type = "command"
+command = "npx -y codebase-memory-mcp@0.10.8 hook-augment"
+command_windows = "& npx.cmd -y codebase-memory-mcp@0.10.8 hook-augment"
+timeout = 30
+# <<< codebase-memory-mcp hooks <<<

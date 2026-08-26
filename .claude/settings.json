@@ -1,0 +1,52 @@
+{
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Grep|Glob",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"require(require('node:path').join(process.env.CLAUDE_PROJECT_DIR,'.claude','hooks','cbm-hook.cjs'))\"",
+                        "timeout": 30
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Read",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"require(require('node:path').join(process.env.CLAUDE_PROJECT_DIR,'.claude','hooks','cbm-hook.cjs'))\"",
+                        "timeout": 30
+                    }
+                ]
+            }
+        ],
+        "SessionStart": [
+            {
+                "matcher": "startup|resume|clear|compact",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"require(require('node:path').join(process.env.CLAUDE_PROJECT_DIR,'.claude','hooks','cbm-hook.cjs'))\"",
+                        "timeout": 30
+                    }
+                ]
+            }
+        ],
+        "SubagentStart": [
+            {
+                "matcher": "*",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"require(require('node:path').join(process.env.CLAUDE_PROJECT_DIR,'.claude','hooks','cbm-hook.cjs'))\"",
+                        "timeout": 30
+                    }
+                ]
+            }
+        ]
+    }
+}

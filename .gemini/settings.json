@@ -1,1 +1,70 @@
-../.mcp.json
+{
+    "context": {
+        "fileName": ["AGENTS.md"]
+    },
+    "mcpServers": {
+        "chrome-devtools": {
+            "type": "stdio",
+            "command": "npx",
+            "args": [
+                "-y",
+                "chrome-devtools-mcp@latest",
+                "--no-performance-crux",
+                "--no-usage-statistics",
+                "--autoConnect",
+                "--channel",
+                "stable"
+            ]
+        },
+        "codebase-memory": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "codebase-memory-mcp@0.10.8"]
+        }
+    },
+    "hooks": {
+        "BeforeTool": [
+            {
+                "matcher": "google_web_search|grep_search",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'BeforeTool',additionalContext:'Code discovery: prefer codebase-memory-mcp search_graph, trace_path, and get_code_snippet over grep or file search.'}}))\""
+                    }
+                ]
+            }
+        ],
+        "SessionStart": [
+            {
+                "matcher": "startup",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:'Code discovery: prefer codebase-memory-mcp search_graph, trace_path, get_code_snippet, query_graph, and search_code; run index_repository first when needed.'}}))\"",
+                        "timeout": 5000
+                    }
+                ]
+            },
+            {
+                "matcher": "resume",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:'Code discovery: prefer codebase-memory-mcp search_graph, trace_path, get_code_snippet, query_graph, and search_code; run index_repository first when needed.'}}))\"",
+                        "timeout": 5000
+                    }
+                ]
+            },
+            {
+                "matcher": "clear",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:'Code discovery: prefer codebase-memory-mcp search_graph, trace_path, get_code_snippet, query_graph, and search_code; run index_repository first when needed.'}}))\"",
+                        "timeout": 5000
+                    }
+                ]
+            }
+        ]
+    }
+}

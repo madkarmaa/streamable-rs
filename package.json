@@ -10,7 +10,7 @@
         "typescript": "^6.0.3"
     },
     "scripts": {
-        "prepare": "husky && git config --local core.symlinks true",
+        "prepare": "husky",
         "format": "prettier --write ."
     }
 }

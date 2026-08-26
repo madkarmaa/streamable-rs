@@ -1,0 +1,21 @@
+{
+    "version": 1,
+    "hooks": {
+        "sessionStart": [
+            {
+                "type": "command",
+                "bash": "npx -y codebase-memory-mcp@0.10.8 hook-augment --event SessionStart --dialect copilot",
+                "powershell": "& npx.cmd -y codebase-memory-mcp@0.10.8 hook-augment --event SessionStart --dialect copilot",
+                "timeoutSec": 30
+            }
+        ],
+        "subagentStart": [
+            {
+                "type": "command",
+                "bash": "npx -y codebase-memory-mcp@0.10.8 hook-augment --event SubagentStart --dialect copilot",
+                "powershell": "& npx.cmd -y codebase-memory-mcp@0.10.8 hook-augment --event SubagentStart --dialect copilot",
+                "timeoutSec": 30
+            }
+        ]
+    }
+}

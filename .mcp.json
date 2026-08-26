@@ -1,6 +1,7 @@
 {
     "mcpServers": {
         "chrome-devtools": {
+            "type": "stdio",
             "command": "npx",
             "args": [
                 "-y",
@@ -11,6 +12,11 @@
                 "--channel",
                 "stable"
             ]
+        },
+        "codebase-memory": {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "codebase-memory-mcp@0.10.8"]
         }
     }
 }
