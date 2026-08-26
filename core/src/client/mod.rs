@@ -18,8 +18,11 @@ use std::{
 };
 use url::Url;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "reqwest"))]
 mod tests;
+
+#[cfg(all(test, not(feature = "reqwest")))]
+mod no_default_tests;
 
 /// Marks a signed-out client.
 ///
@@ -168,7 +171,7 @@ fn store_response_cookies(cookies: &Mutex<CookieStore>, url: &Url, headers: &Hea
 #[derive(Debug)]
 enum EndpointRouting {
     Production,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "reqwest"))]
     Override(Url),
 }
 
@@ -177,7 +180,7 @@ impl EndpointRouting {
         let requested_url = Url::parse(url)?;
         match self {
             Self::Production => Ok(requested_url),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "reqwest"))]
             Self::Override(endpoint_url) => {
                 let mut endpoint_url = endpoint_url.clone();
                 endpoint_url.set_path(requested_url.path());
@@ -190,7 +193,7 @@ impl EndpointRouting {
     const fn override_url(&self) -> Option<&Url> {
         match self {
             Self::Production => None,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "reqwest"))]
             Self::Override(url) => Some(url),
         }
     }
