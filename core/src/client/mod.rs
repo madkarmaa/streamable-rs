@@ -14,7 +14,7 @@ use http::{
 };
 use std::{
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
 use url::Url;
 
@@ -199,6 +199,47 @@ impl EndpointRouting {
     }
 }
 
+struct ClientCore<T> {
+    transport: T,
+    cookies: Mutex<CookieStore>,
+    endpoint_routing: EndpointRouting,
+}
+
+impl<T: HttpTransport> ClientCore<T> {
+    #[tracing::instrument(
+        level = "debug",
+        skip_all,
+        fields(request.type = std::any::type_name::<Req>())
+    )]
+    async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
+    where
+        Req: ApiRequest + Sync,
+    {
+        let result = async {
+            let endpoint_url = self.endpoint_routing.resolve(req.url())?;
+            let response = send_request(
+                &self.transport,
+                &self.cookies,
+                req.method(),
+                endpoint_url,
+                req.headers(),
+                req.body()?,
+            )
+            .await?;
+
+            req.decode_response(response)
+        }
+        .await;
+
+        match &result {
+            Ok(_) => tracing::debug!("completed API request"),
+            Err(error) => tracing::debug!(error.kind = error.kind(), "API request failed"),
+        }
+
+        result
+    }
+}
+
 /// A Streamable API client.
 ///
 /// ```
@@ -209,9 +250,7 @@ impl EndpointRouting {
 /// # Ok::<(), streamable::StreamableError>(())
 /// ```
 pub struct StreamableClient<State = Unauthenticated, T = DefaultTransport> {
-    transport: T,
-    cookies: Mutex<CookieStore>,
-    endpoint_routing: EndpointRouting,
+    core: Arc<ClientCore<T>>,
     state: State,
 }
 
@@ -461,9 +500,11 @@ impl<T> StreamableClient<Unauthenticated, T> {
             "created Streamable client"
         );
         Self {
-            transport,
-            cookies: Mutex::new(CookieStore::default()),
-            endpoint_routing,
+            core: Arc::new(ClientCore {
+                transport,
+                cookies: Mutex::new(CookieStore::default()),
+                endpoint_routing,
+            }),
             state: Unauthenticated { user: None },
         }
     }
@@ -568,9 +609,7 @@ impl<T: HttpTransport> StreamableClient<Unauthenticated, T> {
         user: models::AuthenticatedUser,
     ) -> AuthenticatedStreamableClient<T> {
         StreamableClient {
-            transport: self.transport,
-            cookies: self.cookies,
-            endpoint_routing: self.endpoint_routing,
+            core: self.core,
             state: Authenticated { user },
         }
     }
@@ -737,10 +776,9 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     /// }
     /// ```
     pub fn logout(self) -> UnauthenticatedStreamableClient<T> {
+        *lock_unpoisoned(&self.core.cookies) = CookieStore::default();
         StreamableClient {
-            transport: self.transport,
-            cookies: Mutex::new(CookieStore::default()),
-            endpoint_routing: self.endpoint_routing,
+            core: self.core,
             state: Unauthenticated { user: None },
         }
     }
@@ -757,8 +795,8 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     }
 
     fn session_cookie(&self) -> Result<String> {
-        let url = self.endpoint_routing.resolve(AUTH_BASE_URL)?;
-        lock_unpoisoned(&self.cookies)
+        let url = self.core.endpoint_routing.resolve(AUTH_BASE_URL)?;
+        lock_unpoisoned(&self.core.cookies)
             .get_request_values(&url)
             .find_map(|(name, value)| (name == "session").then(|| value.to_string()))
             .filter(|session| !session.is_empty())
@@ -1262,6 +1300,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         video_file: &Path,
     ) -> Result<()> {
         let signed_put = self
+            .core
             .endpoint_routing
             .override_url()
             .map_or_else(
@@ -1285,6 +1324,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         };
         tracing::debug!(url = %endpoint, "uploading video file to object storage");
         let response = self
+            .core
             .transport
             .execute(request)
             .await
@@ -1341,27 +1381,6 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
     where
         Req: ApiRequest + Sync,
     {
-        let result = async {
-            let endpoint_url = self.endpoint_routing.resolve(req.url())?;
-            let response = send_request(
-                &self.transport,
-                &self.cookies,
-                req.method(),
-                endpoint_url,
-                req.headers(),
-                req.body()?,
-            )
-            .await?;
-
-            req.decode_response(response)
-        }
-        .await;
-
-        match &result {
-            Ok(_) => tracing::debug!("completed API request"),
-            Err(error) => tracing::debug!(error.kind = error.kind(), "API request failed"),
-        }
-
-        result
+        self.core.execute(req).await
     }
 }
