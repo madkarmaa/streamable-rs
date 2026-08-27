@@ -966,14 +966,12 @@ async fn set_video_thumbnail_frame_patches_exact_offset_and_decodes_video() {
         .expect(1)
         .mount(&mock_server)
         .await;
-    let (client, _, _) = mock_client(&mock_server)
+    let registration = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
-
-    let video = client
+        .expect("registration should succeed");
+    let video = registration
         .set_video_thumbnail_frame("abc123", 12.5)
         .await
         .expect("frame thumbnail update should succeed");
@@ -1017,14 +1015,12 @@ async fn upload_video_thumbnail_posts_one_streamed_screenshot_file() {
         .expect(1)
         .mount(&mock_server)
         .await;
-    let (client, _, _) = mock_client(&mock_server)
+    let registration = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
-
-    let video = client
+        .expect("registration should succeed");
+    let video = registration
         .upload_video_thumbnail("abc123", &image_file)
         .await
         .expect("custom thumbnail upload should succeed");
@@ -1106,27 +1102,29 @@ async fn video_thumbnail_operations_map_endpoint_and_common_errors() {
         .expect(1)
         .mount(&mock_server)
         .await;
-    let (client, _, _) = mock_client(&mock_server)
+    let registration = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
-
+        .expect("registration should succeed");
     let frame_error = expect_streamable_error(
-        client.set_video_thumbnail_frame("rejected", 100.0).await,
+        registration
+            .set_video_thumbnail_frame("rejected", 100.0)
+            .await,
         "rejected frame thumbnail should fail",
     );
     let upload_error = expect_streamable_error(
-        client.upload_video_thumbnail("rejected", &image_file).await,
+        registration
+            .upload_video_thumbnail("rejected", &image_file)
+            .await,
         "rejected custom thumbnail should fail",
     );
     let session_error = expect_streamable_error(
-        client.set_video_thumbnail_frame("expired", 1.0).await,
+        registration.set_video_thumbnail_frame("expired", 1.0).await,
         "expired thumbnail session should fail",
     );
     let rate_limit_error = expect_streamable_error(
-        client
+        registration
             .upload_video_thumbnail("rate-limited", &image_file)
             .await,
         "rate-limited thumbnail upload should fail",
@@ -1312,12 +1310,11 @@ async fn authenticated_client_refreshes_full_user_data() {
         .mount(&mock_server)
         .await;
 
-    let (mut client, _, _) = mock_client(&mock_server)
+    let mut client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
     let user = client
         .refresh_user()
         .await
@@ -1375,15 +1372,16 @@ async fn test_successful_random_registration() {
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let (client, email, password) = client
+    let registration = client
         .register(None, None, None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
+    let email = registration.email().to_owned();
+    let password = registration.password().to_owned();
 
     assert!(!email.is_empty());
     assert!(!password.is_empty());
-    assert!(client.is_authenticated());
+    assert!(registration.is_authenticated());
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     {
@@ -1423,18 +1421,19 @@ async fn test_successful_registration_and_login() {
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let registration_client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let (registered_client, returned_email, returned_password) = registration_client
+    let registration = registration_client
         .register(Some(email.clone()), Some(password.clone()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
+    let returned_email = registration.email().to_owned();
+    let returned_password = registration.password().to_owned();
 
     assert_eq!(returned_email, email);
     assert_eq!(returned_password, password);
-    assert_eq!(registered_client.user().email, email);
-    assert!(registered_client.is_authenticated());
+    assert_eq!(registration.user().email, email);
+    assert!(registration.is_authenticated());
 
-    let login_client = registered_client.logout();
+    let login_client = registration.logout();
 
     assert!(!login_client.is_authenticated());
 
@@ -1564,7 +1563,7 @@ async fn mocked_change_password_flow() {
     )
     .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(
             Some(email.to_string()),
@@ -1572,8 +1571,7 @@ async fn mocked_change_password_flow() {
             None,
         )
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     let error = expect_streamable_error(
         client.change_password(wrong_password, new_password).await,
@@ -1631,12 +1629,11 @@ async fn create_label_posts_trimmed_name_and_returns_label() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     let label = client
         .create_label("  important  ")
@@ -1667,12 +1664,11 @@ async fn create_label_reports_duplicate_name() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     let error = expect_streamable_error(
         client.create_label("important").await,
@@ -1700,12 +1696,11 @@ async fn delete_label_sends_bodyless_request() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     client
         .delete_label(174_172)
@@ -1741,12 +1736,11 @@ async fn delete_label_reports_missing_id() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     let error = expect_streamable_error(
         client.delete_label(696_969).await,
@@ -1778,12 +1772,11 @@ async fn rename_label_patches_trimmed_name_and_returns_label() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     let label = client
         .rename_label(174_172, "  renamed  ")
@@ -1818,12 +1811,11 @@ async fn rename_label_reports_missing_id() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     let error = expect_streamable_error(
         client.rename_label(696_969, "renamed").await,
@@ -1852,12 +1844,11 @@ async fn set_video_labels_posts_ordered_absolute_replacement() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     client
         .set_video_labels("abc123", &[42, 7, 18])
@@ -1881,12 +1872,11 @@ async fn set_video_labels_posts_empty_replacement() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     client
         .set_video_labels("abc123", &[])
@@ -1920,12 +1910,11 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
 
     let rejected = expect_streamable_error(
         client.set_video_labels("rejected", &[7]).await,
@@ -2343,12 +2332,11 @@ async fn collection_operations_map_endpoint_and_common_errors() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
     let one_shortcode = vec!["only".to_string()];
 
     let creation = expect_streamable_error(
@@ -2891,12 +2879,11 @@ async fn update_video_privacy_serializes_password_removal_as_null() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
     let update = models::VideoPrivacySettingsUpdate {
         password: Some(models::VideoPasswordUpdate::Remove),
         ..models::VideoPrivacySettingsUpdate::default()
@@ -2972,12 +2959,11 @@ async fn video_privacy_operations_map_endpoint_and_common_errors() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed")
-        .into_parts();
+        .expect("registration should succeed");
     let update = models::VideoPrivacySettingsUpdate {
         visibility: Some(models::Visibility::Private),
         ..models::VideoPrivacySettingsUpdate::default()
@@ -3128,12 +3114,11 @@ async fn registration_reports_email_already_in_use() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let password = generate_random_password();
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let (_registered_client, _, _) = StreamableClient::new()
+    let _registration = StreamableClient::new()
         .expect("client should initialize")
         .register(Some(email.clone()), Some(password.clone()), None)
         .await
-        .expect("first registration should succeed")
-        .into_parts();
+        .expect("first registration should succeed");
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let client = StreamableClient::new().expect("client should initialize");
 

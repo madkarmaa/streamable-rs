@@ -3,7 +3,13 @@ use crate::{
     Result, models,
     transport::{DefaultTransport, HttpTransport},
 };
-use std::{fmt, marker::PhantomData, ops::Deref, path::Path, sync::Arc};
+use std::{
+    fmt,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    path::Path,
+    sync::Arc,
+};
 
 /// A successful registration together with any generated credentials.
 ///
@@ -80,16 +86,20 @@ impl<T> Registration<T> {
         &self.client
     }
 
-    /// Splits the authenticated client and credentials.
+    /// Signs out and returns an unauthenticated client.
     ///
     /// ```no_run
     /// # fn run(registration: streamable::Registration) {
-    /// let (client, email, password) = registration.into_parts();
+    /// let client = registration.logout();
+    /// assert!(!client.is_authenticated());
     /// # }
     /// ```
     #[must_use]
-    pub fn into_parts(self) -> (AuthenticatedStreamableClient<T>, String, String) {
-        (self.client, self.email, self.password)
+    pub fn logout(self) -> super::UnauthenticatedStreamableClient<T>
+    where
+        T: HttpTransport,
+    {
+        self.client.logout()
     }
 }
 
@@ -98,6 +108,12 @@ impl<T> Deref for Registration<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.client
+    }
+}
+
+impl<T> DerefMut for Registration<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.client
     }
 }
 
