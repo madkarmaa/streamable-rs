@@ -12,6 +12,9 @@ Unofficial async Rust client for Streamable's undocumented API.
 Video and collection operations work without signing in. Account and label operations require a
 signed-in client.
 
+Returned videos, labels, collections, and uploads retain their client session and expose their own
+remote operations.
+
 ## Usage
 
 ```no_run
@@ -19,12 +22,12 @@ use streamable::{models::VideoPrivacySettingsUpdate, Result, StreamableClient};
 
 # async fn run() -> Result<()> {
 let client = StreamableClient::new()?;
-let video = client.upload_video("video.mp4", None).await?;
-client.update_video_privacy(&video.shortcode, &VideoPrivacySettingsUpdate {
+let mut video = client.upload_video("video.mp4", None).await?;
+video.update_privacy(&VideoPrivacySettingsUpdate {
     allow_download: Some(false),
     ..Default::default()
 }).await?;
-client.set_video_thumbnail_frame(&video.shortcode, 1.5).await?;
+video.set_thumbnail_frame(1.5).await?;
 # Ok(()) }
 ```
 
@@ -37,7 +40,8 @@ use streamable::{Result, StreamableClient};
 let client = StreamableClient::new()?
     .login("me@example.com".into(), "password".into()).await?;
 let label = client.create_label("reviewed").await?;
-client.set_video_labels("abc123", &[label.id]).await?;
+let video = client.get_video("abc123").await?;
+video.set_labels(&[label.id]).await?;
 # Ok(()) }
 ```
 
