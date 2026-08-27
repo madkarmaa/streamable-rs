@@ -13,6 +13,7 @@ use http::{
     header::{CONTENT_TYPE, COOKIE},
 };
 use std::{
+    marker::PhantomData,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -23,6 +24,12 @@ mod tests;
 
 #[cfg(all(test, not(feature = "reqwest")))]
 mod no_default_tests;
+
+mod resources;
+
+pub use resources::{
+    Collection, CollectionDetails, CollectionPage, CollectionSummary, Label, Registration, Video,
+};
 
 /// Marks a signed-out client.
 ///
@@ -240,6 +247,151 @@ impl<T: HttpTransport> ClientCore<T> {
     }
 }
 
+async fn upload_video_thumbnail<T: HttpTransport>(
+    core: &ClientCore<T>,
+    shortcode: &str,
+    image_file: &Path,
+) -> Result<models::Video> {
+    let image_file = std::fs::canonicalize(image_file).inspect_err(|_| {
+        tracing::debug!(
+            error.kind = "io",
+            operation = "canonicalize",
+            "thumbnail upload setup failed"
+        );
+    })?;
+
+    if !utils::is_image_file(&image_file) {
+        tracing::debug!(
+            error.kind = "invalid_image_file",
+            "thumbnail upload setup failed"
+        );
+        return Err(StreamableError::InvalidImageFile { path: image_file });
+    }
+
+    let file_name = image_file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .ok_or_else(|| StreamableError::InvalidImageFile {
+            path: image_file.clone(),
+        })?;
+    let media_type = FileFormat::from_file(&image_file)?.media_type().to_string();
+
+    core.execute(&models::UploadVideoThumbnailRequest::new(
+        shortcode, image_file, file_name, media_type,
+    ))
+    .await
+}
+
+async fn cancel_video_upload<T: HttpTransport>(
+    core: &ClientCore<T>,
+    shortcode: &str,
+) -> Result<()> {
+    core.execute(&models::CancelVideoUploadRequest::new(shortcode))
+        .await
+}
+
+async fn initialize_video_upload<T: HttpTransport>(
+    core: &ClientCore<T>,
+    upload_info: &models::UploadInfo,
+    size: u64,
+    original_name: String,
+    title: String,
+) -> Result<()> {
+    core.execute(&models::InitializeVideoUploadRequest::new(
+        &upload_info.shortcode,
+        size,
+        original_name,
+        title,
+    ))
+    .await
+}
+
+#[tracing::instrument(
+    level = "debug",
+    skip_all,
+    fields(shortcode = %upload_info.shortcode, upload.bytes = size)
+)]
+async fn upload_video_file_to_s3<T: HttpTransport>(
+    core: &ClientCore<T>,
+    upload_info: &models::UploadInfo,
+    size: u64,
+    video_file: &Path,
+) -> Result<()> {
+    let signed_put = core
+        .endpoint_routing
+        .override_url()
+        .map_or_else(
+            || utils::s3::build_s3_put(upload_info, size),
+            |base_url| utils::s3::build_s3_put_for_base_url(upload_info, size, base_url),
+        )
+        .map_err(|error| {
+            tracing::debug!(
+                error.kind = error.kind(),
+                "object storage request signing failed"
+            );
+            StreamableError::UploadSigning
+        })?;
+
+    let endpoint = signed_put.url.clone();
+    let request = TransportRequest {
+        method: http::Method::PUT,
+        url: signed_put.url,
+        headers: signed_put.headers,
+        body: Body::File(video_file.to_owned()),
+    };
+    tracing::debug!(url = %endpoint, "uploading video file to object storage");
+    let response = core
+        .transport
+        .execute(request)
+        .await
+        .map_err(StreamableError::transport)?;
+    tracing::debug!(
+        http.status = response.status.as_u16(),
+        response.body.length = response.body.len(),
+        "received object storage response"
+    );
+    ApiResponse::new(response.status, endpoint, response.body).into_empty()
+}
+
+async fn transcode_video_after_upload<T: HttpTransport>(
+    core: &ClientCore<T>,
+    upload_info: &models::UploadInfo,
+) -> Result<models::Video> {
+    core.execute(&models::TranscodeVideoRequest::new(upload_info))
+        .await
+}
+
+#[tracing::instrument(level = "debug", skip_all, fields(shortcode))]
+async fn finish_upload_or_rollback<T: HttpTransport, U>(
+    core: &ClientCore<T>,
+    shortcode: &str,
+    result: Result<U>,
+) -> Result<U> {
+    match result {
+        Ok(value) => {
+            tracing::debug!("completed video upload");
+            Ok(value)
+        }
+        Err(error) => {
+            tracing::debug!(
+                error.kind = error.kind(),
+                "video upload failed; cancelling allocation"
+            );
+            match cancel_video_upload(core, shortcode).await {
+                Ok(()) => {
+                    tracing::debug!("cancelled failed video upload allocation");
+                    Err(error)
+                }
+                Err(rollback) => Err(StreamableError::UploadRollback {
+                    shortcode: shortcode.to_string(),
+                    source: Box::new(error),
+                    rollback: Box::new(rollback),
+                }),
+            }
+        }
+    }
+}
+
 /// A Streamable API client.
 ///
 /// ```
@@ -264,21 +416,32 @@ pub struct StreamableClient<State = Unauthenticated, T = DefaultTransport> {
 ///
 /// # async fn run() -> Result<()> {
 /// let client = StreamableClient::new()?;
-/// let upload: VideoUpload<'_> = client.begin_video_upload("video.mp4", None).await?;
+/// let upload: VideoUpload = client.begin_video_upload("video.mp4", None).await?;
 /// println!("{}", upload.shortcode());
 /// # Ok(()) }
 /// ```
 #[must_use = "the upload must be completed or explicitly cancelled"]
-pub struct VideoUpload<'a, State = Unauthenticated, T = DefaultTransport> {
-    client: &'a StreamableClient<State, T>,
+pub struct VideoUpload<State = Unauthenticated, T = DefaultTransport> {
+    core: Arc<ClientCore<T>>,
     upload_info: models::UploadInfo,
     video_file: PathBuf,
     size: u64,
     original_name: String,
     title: String,
+    state: PhantomData<State>,
 }
 
-impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
+impl<State, T> std::fmt::Debug for VideoUpload<State, T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VideoUpload")
+            .field("shortcode", &self.upload_info.shortcode)
+            .field("size", &self.size)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<State: Sync, T: HttpTransport> VideoUpload<State, T> {
     /// Returns the allocated Streamable shortcode.
     ///
     /// ```no_run
@@ -304,10 +467,11 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
     /// # Ok(()) }
     /// ```
     #[must_use]
-    pub fn handle(&self) -> VideoUploadHandle<'a, State, T> {
+    pub fn handle(&self) -> VideoUploadHandle<State, T> {
         VideoUploadHandle {
-            client: self.client,
+            core: Arc::clone(&self.core),
             shortcode: self.upload_info.shortcode.clone(),
+            state: PhantomData,
         }
     }
 
@@ -331,29 +495,27 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
         skip_all,
         fields(shortcode = %self.upload_info.shortcode, upload.bytes = self.size)
     )]
-    pub async fn complete(self) -> Result<models::Video> {
+    pub async fn complete(self) -> Result<Video<State, T>> {
         let Self {
-            client,
+            core,
             upload_info,
             video_file,
             size,
             original_name,
             title,
+            state: _,
         } = self;
         let shortcode = upload_info.shortcode.clone();
         tracing::debug!("starting allocated video upload");
         let result = async {
-            client
-                .initialize_video_upload(&upload_info, size, original_name, title)
-                .await?;
-            client
-                .upload_video_file_to_s3(&upload_info, size, &video_file)
-                .await?;
-            client.transcode_video_after_upload(&upload_info).await
+            initialize_video_upload(&core, &upload_info, size, original_name, title).await?;
+            upload_video_file_to_s3(&core, &upload_info, size, &video_file).await?;
+            transcode_video_after_upload(&core, &upload_info).await
         }
         .await;
 
-        client.finish_upload_or_rollback(&shortcode, result).await
+        let data = finish_upload_or_rollback(&core, &shortcode, result).await?;
+        Ok(Video::new(core, data))
     }
 
     /// Cancels this allocated upload on Streamable.
@@ -375,9 +537,7 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
         fields(shortcode = %self.upload_info.shortcode)
     )]
     pub async fn cancel(self) -> Result<()> {
-        self.client
-            .cancel_video_upload(&self.upload_info.shortcode)
-            .await
+        cancel_video_upload(&self.core, &self.upload_info.shortcode).await
     }
 }
 
@@ -389,25 +549,36 @@ impl<'a, State: Sync, T: HttpTransport> VideoUpload<'a, State, T> {
 /// # async fn run() -> Result<()> {
 /// let client = StreamableClient::new()?;
 /// let upload = client.begin_video_upload("video.mp4", None).await?;
-/// let handle: VideoUploadHandle<'_> = upload.handle();
+/// let handle: VideoUploadHandle = upload.handle();
 /// println!("{}", handle.shortcode());
 /// # Ok(()) }
 /// ```
-pub struct VideoUploadHandle<'a, State = Unauthenticated, T = DefaultTransport> {
-    client: &'a StreamableClient<State, T>,
+pub struct VideoUploadHandle<State = Unauthenticated, T = DefaultTransport> {
+    core: Arc<ClientCore<T>>,
     shortcode: String,
+    state: PhantomData<State>,
 }
 
-impl<State, T> Clone for VideoUploadHandle<'_, State, T> {
+impl<State, T> std::fmt::Debug for VideoUploadHandle<State, T> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VideoUploadHandle")
+            .field("shortcode", &self.shortcode)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<State, T> Clone for VideoUploadHandle<State, T> {
     fn clone(&self) -> Self {
         Self {
-            client: self.client,
+            core: Arc::clone(&self.core),
             shortcode: self.shortcode.clone(),
+            state: PhantomData,
         }
     }
 }
 
-impl<State: Sync, T: HttpTransport> VideoUploadHandle<'_, State, T> {
+impl<State: Sync, T: HttpTransport> VideoUploadHandle<State, T> {
     /// Returns the allocated Streamable shortcode.
     ///
     /// ```no_run
@@ -441,7 +612,7 @@ impl<State: Sync, T: HttpTransport> VideoUploadHandle<'_, State, T> {
         fields(shortcode = %self.shortcode)
     )]
     pub async fn cancel(&self) -> Result<()> {
-        self.client.cancel_video_upload(&self.shortcode).await
+        cancel_video_upload(&self.core, &self.shortcode).await
     }
 }
 
@@ -556,8 +727,10 @@ impl<T: HttpTransport> StreamableClient<Unauthenticated, T> {
     ///
     /// ```no_run
     /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// let (client, email, password) = client.register(None, None, None).await?;
+    /// let registration = streamable::StreamableClient::new()?
+    ///     .register(None, None, None)
+    ///     .await?;
+    /// println!("registered {}", registration.email());
     /// # Ok(()) }
     /// ```
     ///
@@ -569,7 +742,7 @@ impl<T: HttpTransport> StreamableClient<Unauthenticated, T> {
         email: Option<String>,
         password: Option<String>,
         username: Option<String>,
-    ) -> Result<(AuthenticatedStreamableClient<T>, String, String)> {
+    ) -> Result<Registration<T>> {
         let email = email.unwrap_or_else(utils::generate_random_username);
         let password = password.unwrap_or_else(utils::generate_random_password);
         let username = username.unwrap_or_else(|| email.clone());
@@ -577,7 +750,11 @@ impl<T: HttpTransport> StreamableClient<Unauthenticated, T> {
         let request = models::CreateUserRequest::new(email.clone(), password.clone(), username);
         let user = self.execute(&request).await?;
 
-        Ok((self.into_authenticated(user), email, password))
+        Ok(Registration::new(
+            self.into_authenticated(user),
+            email,
+            password,
+        ))
     }
 
     /// Signs in with email and password.
@@ -713,8 +890,9 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     ///
     /// Returns an error when the session is invalid, the label already exists, the name is
     /// rejected, or the request fails.
-    pub async fn create_label(&self, name: &str) -> Result<models::Label> {
-        self.execute(&models::CreateLabelRequest::new(name)).await
+    pub async fn create_label(&self, name: &str) -> Result<Label<T>> {
+        let data = self.execute(&models::CreateLabelRequest::new(name)).await?;
+        Ok(self.bind_label(data))
     }
 
     /// Deletes an account label.
@@ -745,9 +923,11 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     ///
     /// Returns an error when the session is invalid, the label does not exist, the name is
     /// rejected, or the request fails.
-    pub async fn rename_label(&self, id: u64, new_name: &str) -> Result<models::Label> {
-        self.execute(&models::RenameLabelRequest::new(id, new_name))
-            .await
+    pub async fn rename_label(&self, id: u64, new_name: &str) -> Result<Label<T>> {
+        let data = self
+            .execute(&models::RenameLabelRequest::new(id, new_name))
+            .await?;
+        Ok(self.bind_label(data))
     }
 
     /// Replaces a video's labels in the given order. An empty slice removes all labels.
@@ -775,6 +955,7 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     ///     assert!(!client.is_authenticated());
     /// }
     /// ```
+    #[must_use]
     pub fn logout(self) -> UnauthenticatedStreamableClient<T> {
         *lock_unpoisoned(&self.core.cookies) = CookieStore::default();
         StreamableClient {
@@ -827,9 +1008,12 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         shortcodes: &[String],
         title: Option<&str>,
-    ) -> Result<models::Collection> {
-        self.execute(&models::CreateCollectionRequest::new(shortcodes, title))
-            .await
+    ) -> Result<Collection<State, T>> {
+        let data = self
+            .execute(&models::CreateCollectionRequest::new(shortcodes, title))
+            .await?;
+        let shortcode = data.shortcode.clone();
+        Ok(Collection::new(Arc::clone(&self.core), shortcode, data))
     }
 
     /// Counts collections belonging to the current client session. Works without signing in.
@@ -868,9 +1052,19 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         page: Option<u32>,
         count: Option<u32>,
-    ) -> Result<models::CollectionPage> {
-        self.execute(&models::ListCollectionsRequest::new(page, count))
-            .await
+    ) -> Result<CollectionPage<State, T>> {
+        let page = self
+            .execute(&models::ListCollectionsRequest::new(page, count))
+            .await?;
+        let collections = page
+            .collections
+            .into_iter()
+            .map(|data| {
+                let shortcode = data.shortcode.clone();
+                Collection::new(Arc::clone(&self.core), shortcode, data)
+            })
+            .collect();
+        Ok(CollectionPage::new(collections))
     }
 
     /// Gets public collection details. An authenticated owner also receives owner fields.
@@ -887,9 +1081,15 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
     ///
     /// Returns an error when the collection does not exist, Streamable rejects the request, or the
     /// response cannot be decoded.
-    pub async fn get_collection(&self, shortcode: &str) -> Result<models::CollectionDetails> {
-        self.execute(&models::GetCollectionRequest::new(shortcode))
-            .await
+    pub async fn get_collection(&self, shortcode: &str) -> Result<CollectionDetails<State, T>> {
+        let data = self
+            .execute(&models::GetCollectionRequest::new(shortcode))
+            .await?;
+        Ok(Collection::new(
+            Arc::clone(&self.core),
+            shortcode.to_string(),
+            data,
+        ))
     }
 
     /// Replaces a collection title. Works without signing in.
@@ -910,9 +1110,15 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         shortcode: &str,
         title: &str,
-    ) -> Result<models::Collection> {
-        self.execute(&models::UpdateCollectionTitleRequest::new(shortcode, title))
-            .await
+    ) -> Result<Collection<State, T>> {
+        let data = self
+            .execute(&models::UpdateCollectionTitleRequest::new(shortcode, title))
+            .await?;
+        Ok(Collection::new(
+            Arc::clone(&self.core),
+            shortcode.to_string(),
+            data,
+        ))
     }
 
     /// Replaces a collection's complete video membership in the given order. Works without
@@ -936,11 +1142,17 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         shortcode: &str,
         shortcodes: &[String],
-    ) -> Result<models::Collection> {
-        self.execute(&models::ReplaceCollectionVideosRequest::new(
-            shortcode, shortcodes,
+    ) -> Result<Collection<State, T>> {
+        let data = self
+            .execute(&models::ReplaceCollectionVideosRequest::new(
+                shortcode, shortcodes,
+            ))
+            .await?;
+        Ok(Collection::new(
+            Arc::clone(&self.core),
+            shortcode.to_string(),
+            data,
         ))
-        .await
     }
 
     /// Deletes a collection without deleting its member videos. Works without signing in.
@@ -1051,8 +1263,11 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
     ///
     /// Returns an error when the request fails or the response does not match the expected video
     /// model.
-    pub async fn get_video(&self, shortcode: &str) -> Result<models::Video> {
-        self.execute(&models::GetVideoRequest::new(shortcode)).await
+    pub async fn get_video(&self, shortcode: &str) -> Result<Video<State, T>> {
+        let data = self
+            .execute(&models::GetVideoRequest::new(shortcode))
+            .await?;
+        Ok(Video::new(Arc::clone(&self.core), data))
     }
 
     /// Uses a video frame at the given offset as its thumbnail. Works without signing in.
@@ -1073,15 +1288,17 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         shortcode: &str,
         seconds: f64,
-    ) -> Result<models::Video> {
+    ) -> Result<Video<State, T>> {
         if !seconds.is_finite() || seconds < 0.0 {
             return Err(StreamableError::InvalidThumbnailOffset { seconds });
         }
 
-        self.execute(&models::SetVideoThumbnailFrameRequest::new(
-            shortcode, seconds,
-        ))
-        .await
+        let data = self
+            .execute(&models::SetVideoThumbnailFrameRequest::new(
+                shortcode, seconds,
+            ))
+            .await?;
+        Ok(Video::new(Arc::clone(&self.core), data))
     }
 
     /// Uploads an image as a video's custom thumbnail. Works without signing in.
@@ -1105,35 +1322,9 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         shortcode: &str,
         image_file: impl AsRef<Path>,
-    ) -> Result<models::Video> {
-        let image_file = std::fs::canonicalize(image_file.as_ref()).inspect_err(|_| {
-            tracing::debug!(
-                error.kind = "io",
-                operation = "canonicalize",
-                "thumbnail upload setup failed"
-            );
-        })?;
-
-        if !utils::is_image_file(&image_file) {
-            tracing::debug!(
-                error.kind = "invalid_image_file",
-                "thumbnail upload setup failed"
-            );
-            return Err(StreamableError::InvalidImageFile { path: image_file });
-        }
-
-        let file_name = image_file
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .ok_or_else(|| StreamableError::InvalidImageFile {
-                path: image_file.clone(),
-            })?;
-        let media_type = FileFormat::from_file(&image_file)?.media_type().to_string();
-
-        self.execute(&models::UploadVideoThumbnailRequest::new(
-            shortcode, image_file, file_name, media_type,
-        ))
-        .await
+    ) -> Result<Video<State, T>> {
+        let data = upload_video_thumbnail(&self.core, shortcode, image_file.as_ref()).await?;
+        Ok(Video::new(Arc::clone(&self.core), data))
     }
 
     /// Deletes a video. Works without signing in.
@@ -1171,7 +1362,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         video_file: impl AsRef<Path>,
         title: Option<String>,
-    ) -> Result<models::Video> {
+    ) -> Result<Video<State, T>> {
         self.begin_video_upload(video_file, title)
             .await?
             .complete()
@@ -1197,7 +1388,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         &self,
         video_file: impl AsRef<Path>,
         title: Option<String>,
-    ) -> Result<VideoUpload<'_, State, T>> {
+    ) -> Result<VideoUpload<State, T>> {
         let video_file = std::fs::canonicalize(video_file.as_ref()).inspect_err(|_| {
             tracing::debug!(
                 error.kind = "io",
@@ -1242,12 +1433,13 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         let upload_info = self.generate_shortcode(size).await?;
 
         Ok(VideoUpload {
-            client: self,
+            core: Arc::clone(&self.core),
             upload_info,
             video_file,
             size,
             original_name,
             title,
+            state: PhantomData,
         })
     }
 
@@ -1264,112 +1456,11 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
     ///
     /// Returns an error when the cancellation request fails or Streamable rejects it.
     pub async fn cancel_video_upload(&self, shortcode: &str) -> Result<()> {
-        self.execute(&models::CancelVideoUploadRequest::new(shortcode))
-            .await
+        cancel_video_upload(&self.core, shortcode).await
     }
 
     async fn generate_shortcode(&self, size: u64) -> Result<models::UploadInfo> {
         self.execute(&models::ShortcodeRequest::new(size)).await
-    }
-
-    async fn initialize_video_upload(
-        &self,
-        upload_info: &models::UploadInfo,
-        size: u64,
-        original_name: String,
-        title: String,
-    ) -> Result<()> {
-        self.execute(&models::InitializeVideoUploadRequest::new(
-            &upload_info.shortcode,
-            size,
-            original_name,
-            title,
-        ))
-        .await
-    }
-
-    #[tracing::instrument(
-        level = "debug",
-        skip_all,
-        fields(shortcode = %upload_info.shortcode, upload.bytes = size)
-    )]
-    async fn upload_video_file_to_s3(
-        &self,
-        upload_info: &models::UploadInfo,
-        size: u64,
-        video_file: &Path,
-    ) -> Result<()> {
-        let signed_put = self
-            .core
-            .endpoint_routing
-            .override_url()
-            .map_or_else(
-                || utils::s3::build_s3_put(upload_info, size),
-                |base_url| utils::s3::build_s3_put_for_base_url(upload_info, size, base_url),
-            )
-            .map_err(|error| {
-                tracing::debug!(
-                    error.kind = error.kind(),
-                    "object storage request signing failed"
-                );
-                StreamableError::UploadSigning
-            })?;
-
-        let endpoint = signed_put.url.clone();
-        let request = TransportRequest {
-            method: http::Method::PUT,
-            url: signed_put.url,
-            headers: signed_put.headers,
-            body: Body::File(video_file.to_owned()),
-        };
-        tracing::debug!(url = %endpoint, "uploading video file to object storage");
-        let response = self
-            .core
-            .transport
-            .execute(request)
-            .await
-            .map_err(StreamableError::transport)?;
-        tracing::debug!(
-            http.status = response.status.as_u16(),
-            response.body.length = response.body.len(),
-            "received object storage response"
-        );
-        ApiResponse::new(response.status, endpoint, response.body).into_empty()
-    }
-
-    async fn transcode_video_after_upload(
-        &self,
-        upload_info: &models::UploadInfo,
-    ) -> Result<models::Video> {
-        self.execute(&models::TranscodeVideoRequest::new(upload_info))
-            .await
-    }
-
-    #[tracing::instrument(level = "debug", skip_all, fields(shortcode))]
-    async fn finish_upload_or_rollback<U>(&self, shortcode: &str, result: Result<U>) -> Result<U> {
-        match result {
-            Ok(value) => {
-                tracing::debug!("completed video upload");
-                Ok(value)
-            }
-            Err(error) => {
-                tracing::debug!(
-                    error.kind = error.kind(),
-                    "video upload failed; cancelling allocation"
-                );
-                match self.cancel_video_upload(shortcode).await {
-                    Ok(()) => {
-                        tracing::debug!("cancelled failed video upload allocation");
-                        Err(error)
-                    }
-                    Err(rollback) => Err(StreamableError::UploadRollback {
-                        shortcode: shortcode.to_string(),
-                        source: Box::new(error),
-                        rollback: Box::new(rollback),
-                    }),
-                }
-            }
-        }
     }
 
     #[tracing::instrument(

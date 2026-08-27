@@ -65,8 +65,9 @@ pub mod transport;
 pub mod utils;
 
 pub use client::{
-    Authenticated, AuthenticatedStreamableClient, StreamableClient, Unauthenticated,
-    UnauthenticatedStreamableClient, VideoUpload, VideoUploadHandle,
+    Authenticated, AuthenticatedStreamableClient, Collection, CollectionDetails, CollectionPage,
+    CollectionSummary, Label, Registration, StreamableClient, Unauthenticated,
+    UnauthenticatedStreamableClient, Video, VideoUpload, VideoUploadHandle,
 };
 pub use errors::{Result, StreamableError};
 pub use response::ApiResponse;

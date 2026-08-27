@@ -970,7 +970,8 @@ async fn set_video_thumbnail_frame_patches_exact_offset_and_decodes_video() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let video = client
         .set_video_thumbnail_frame("abc123", 12.5)
@@ -1020,7 +1021,8 @@ async fn upload_video_thumbnail_posts_one_streamed_screenshot_file() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let video = client
         .upload_video_thumbnail("abc123", &image_file)
@@ -1108,7 +1110,8 @@ async fn video_thumbnail_operations_map_endpoint_and_common_errors() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let frame_error = expect_streamable_error(
         client.set_video_thumbnail_frame("rejected", 100.0).await,
@@ -1242,8 +1245,8 @@ fn configured_base_url_is_stored() {
         StreamableClient::with_base_url(base_url.clone()).expect("client should initialize");
 
     assert!(matches!(
-        client.endpoint_routing,
-        EndpointRouting::Override(url) if url == base_url
+        client.core.endpoint_routing,
+        EndpointRouting::Override(ref url) if url == &base_url
     ));
 }
 
@@ -1313,7 +1316,8 @@ async fn authenticated_client_refreshes_full_user_data() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
     let user = client
         .refresh_user()
         .await
@@ -1374,7 +1378,8 @@ async fn test_successful_random_registration() {
     let (client, email, password) = client
         .register(None, None, None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     assert!(!email.is_empty());
     assert!(!password.is_empty());
@@ -1421,7 +1426,8 @@ async fn test_successful_registration_and_login() {
     let (registered_client, returned_email, returned_password) = registration_client
         .register(Some(email.clone()), Some(password.clone()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     assert_eq!(returned_email, email);
     assert_eq!(returned_password, password);
@@ -1566,7 +1572,8 @@ async fn mocked_change_password_flow() {
             None,
         )
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let error = expect_streamable_error(
         client.change_password(wrong_password, new_password).await,
@@ -1628,7 +1635,8 @@ async fn create_label_posts_trimmed_name_and_returns_label() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let label = client
         .create_label("  important  ")
@@ -1636,8 +1644,8 @@ async fn create_label_posts_trimmed_name_and_returns_label() {
         .expect("label creation should succeed");
 
     assert_eq!(
-        label,
-        models::Label {
+        label.data(),
+        &models::Label {
             name: "important".to_string(),
             id: 174_172
         }
@@ -1663,7 +1671,8 @@ async fn create_label_reports_duplicate_name() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let error = expect_streamable_error(
         client.create_label("important").await,
@@ -1695,7 +1704,8 @@ async fn delete_label_sends_bodyless_request() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     client
         .delete_label(174_172)
@@ -1735,7 +1745,8 @@ async fn delete_label_reports_missing_id() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let error = expect_streamable_error(
         client.delete_label(696_969).await,
@@ -1771,7 +1782,8 @@ async fn rename_label_patches_trimmed_name_and_returns_label() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let label = client
         .rename_label(174_172, "  renamed  ")
@@ -1779,8 +1791,8 @@ async fn rename_label_patches_trimmed_name_and_returns_label() {
         .expect("label rename should succeed");
 
     assert_eq!(
-        label,
-        models::Label {
+        label.data(),
+        &models::Label {
             id: 174_172,
             name: "renamed".to_string()
         }
@@ -1810,7 +1822,8 @@ async fn rename_label_reports_missing_id() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let error = expect_streamable_error(
         client.rename_label(696_969, "renamed").await,
@@ -1843,7 +1856,8 @@ async fn set_video_labels_posts_ordered_absolute_replacement() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     client
         .set_video_labels("abc123", &[42, 7, 18])
@@ -1871,7 +1885,8 @@ async fn set_video_labels_posts_empty_replacement() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     client
         .set_video_labels("abc123", &[])
@@ -1909,7 +1924,8 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
 
     let rejected = expect_streamable_error(
         client.set_video_labels("rejected", &[7]).await,
@@ -2331,7 +2347,8 @@ async fn collection_operations_map_endpoint_and_common_errors() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
     let one_shortcode = vec!["only".to_string()];
 
     let creation = expect_streamable_error(
@@ -2460,12 +2477,12 @@ async fn remote_anonymous_collection_lifecycle() {
             .upload_video(media_path("webm.webm"), Some(format!("{title}-first")))
             .await
             .map_err(|error| format!("first anonymous video upload failed: {error}"))?;
-        video_shortcodes.push(first.shortcode);
+        video_shortcodes.push(first.shortcode.clone());
         let second = client
             .upload_video(media_path("webm.webm"), Some(format!("{title}-second")))
             .await
             .map_err(|error| format!("second anonymous video upload failed: {error}"))?;
-        video_shortcodes.push(second.shortcode);
+        video_shortcodes.push(second.shortcode.clone());
 
         let created = client
             .create_collection(&video_shortcodes, None)
@@ -2567,12 +2584,12 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             .upload_video(media_path("webm.webm"), Some(format!("{title}-first")))
             .await
             .map_err(|error| format!("first remote video upload failed: {error}"))?;
-        video_shortcodes.push(first.shortcode);
+        video_shortcodes.push(first.shortcode.clone());
         let second = client
             .upload_video(media_path("webm.webm"), Some(format!("{title}-second")))
             .await
             .map_err(|error| format!("second remote video upload failed: {error}"))?;
-        video_shortcodes.push(second.shortcode);
+        video_shortcodes.push(second.shortcode.clone());
 
         let created = client
             .create_collection(&video_shortcodes, None)
@@ -2852,6 +2869,7 @@ async fn unauthenticated_video_privacy_update_and_explicit_refresh_succeed() {
         .expect("video refresh should succeed");
     let settings = video
         .privacy_settings
+        .as_ref()
         .expect("refreshed video should include privacy settings");
 
     assert_eq!(settings.visibility, models::Visibility::HiddenOnStreamable);
@@ -2877,7 +2895,8 @@ async fn update_video_privacy_serializes_password_removal_as_null() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
     let update = models::VideoPrivacySettingsUpdate {
         password: Some(models::VideoPasswordUpdate::Remove),
         ..models::VideoPrivacySettingsUpdate::default()
@@ -2957,7 +2976,8 @@ async fn video_privacy_operations_map_endpoint_and_common_errors() {
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
-        .expect("registration should succeed");
+        .expect("registration should succeed")
+        .into_parts();
     let update = models::VideoPrivacySettingsUpdate {
         visibility: Some(models::Visibility::Private),
         ..models::VideoPrivacySettingsUpdate::default()
@@ -3021,6 +3041,7 @@ async fn remote_video_privacy_can_be_updated_and_refreshed() {
     assert_eq!(
         refreshed
             .privacy_settings
+            .as_ref()
             .expect("remote video should include updated privacy settings")
             .visibility,
         models::Visibility::Private
@@ -3111,7 +3132,8 @@ async fn registration_reports_email_already_in_use() {
         .expect("client should initialize")
         .register(Some(email.clone()), Some(password.clone()), None)
         .await
-        .expect("first registration should succeed");
+        .expect("first registration should succeed")
+        .into_parts();
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let client = StreamableClient::new().expect("client should initialize");
 
@@ -3282,4 +3304,143 @@ async fn authentication_reports_invalid_sessions() {
     };
 
     assert!(matches!(error, StreamableError::InvalidSession { .. }));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_resource_deletes_after_originating_client_is_dropped() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_string("true"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+    let video = client
+        .get_video("abc123")
+        .await
+        .expect("video lookup should succeed");
+    drop(client);
+
+    video
+        .delete()
+        .await
+        .expect("client-bound video deletion should succeed");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    let delete_request = requests
+        .iter()
+        .find(|request| request.method.as_str() == "DELETE")
+        .expect("delete request should be recorded");
+    assert!(delete_request.body.is_empty());
+    assert!(!delete_request.headers.contains_key("content-type"));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn registration_chains_into_label_resource_with_retained_session() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "name": "temporary" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "name": "temporary",
+            "id": 174172
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/labels/174172"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let label = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed")
+        .create_label("temporary")
+        .await
+        .expect("label creation should succeed");
+
+    label
+        .delete()
+        .await
+        .expect("client-bound label deletion should succeed");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn collection_resource_updates_and_deletes_after_client_is_dropped() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/collections"))
+        .and(NoCookieHeader)
+        .and(body_json(json!({ "shortcodes": ["first"] })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": null,
+            "videos": [{ "shortcode": "first", "title": "First", "plays": 0 }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .and(body_json(json!({ "title": "Highlights" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": "Highlights",
+            "videos": [{ "shortcode": "first", "title": "First", "plays": 0 }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+    let shortcodes = vec!["first".to_string()];
+    let collection = client
+        .create_collection(&shortcodes, None)
+        .await
+        .expect("collection creation should succeed");
+    drop(client);
+
+    let collection = collection
+        .set_title("Highlights")
+        .await
+        .expect("client-bound title update should succeed");
+    assert_eq!(collection.title.as_deref(), Some("Highlights"));
+    collection
+        .delete()
+        .await
+        .expect("client-bound collection deletion should succeed");
 }
