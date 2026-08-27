@@ -330,6 +330,16 @@ fn mock_video(shortcode: &str, is_custom: bool) -> serde_json::Value {
     })
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_video<State, T>(
+    client: &StreamableClient<State, T>,
+    shortcode: &str,
+) -> Video<State, T> {
+    let data = serde_json::from_value(mock_video(shortcode, false))
+        .expect("mock video should match the wire model");
+    Video::new(Arc::clone(&client.core), data)
+}
+
 #[allow(clippy::panic)]
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
     match result {
@@ -971,8 +981,10 @@ async fn set_video_thumbnail_frame_patches_exact_offset_and_decodes_video() {
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
-    let video = registration
-        .set_video_thumbnail_frame("abc123", 12.5)
+    let mut video = bound_mock_video(registration.client(), "abc123");
+
+    video
+        .set_thumbnail_frame(12.5)
         .await
         .expect("frame thumbnail update should succeed");
 
@@ -1020,8 +1032,10 @@ async fn upload_video_thumbnail_posts_one_streamed_screenshot_file() {
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
-    let video = registration
-        .upload_video_thumbnail("abc123", &image_file)
+    let mut video = bound_mock_video(registration.client(), "abc123");
+
+    video
+        .upload_thumbnail(&image_file)
         .await
         .expect("custom thumbnail upload should succeed");
 
@@ -1037,10 +1051,11 @@ async fn upload_video_thumbnail_posts_one_streamed_screenshot_file() {
 async fn video_thumbnail_inputs_are_validated_before_requests() {
     let mock_server = MockServer::start().await;
     let client = mock_client(&mock_server).expect("mock client should initialize");
+    let mut video = bound_mock_video(&client, "abc123");
 
     for seconds in [-1.0, f64::NAN, f64::INFINITY] {
-        let error = client
-            .set_video_thumbnail_frame("abc123", seconds)
+        let error = video
+            .set_thumbnail_frame(seconds)
             .await
             .expect_err("invalid thumbnail offset should be rejected");
         assert!(matches!(
@@ -1049,8 +1064,8 @@ async fn video_thumbnail_inputs_are_validated_before_requests() {
         ));
     }
 
-    let error = client
-        .upload_video_thumbnail("abc123", media_path("webm.webm"))
+    let error = video
+        .upload_thumbnail(media_path("webm.webm"))
         .await
         .expect_err("video content should be rejected as a thumbnail image");
     assert!(matches!(error, StreamableError::InvalidImageFile { .. }));
@@ -1107,26 +1122,24 @@ async fn video_thumbnail_operations_map_endpoint_and_common_errors() {
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
+    let mut rejected = bound_mock_video(registration.client(), "rejected");
+    let mut expired = bound_mock_video(registration.client(), "expired");
+    let mut rate_limited = bound_mock_video(registration.client(), "rate-limited");
+
     let frame_error = expect_streamable_error(
-        registration
-            .set_video_thumbnail_frame("rejected", 100.0)
-            .await,
+        rejected.set_thumbnail_frame(100.0).await,
         "rejected frame thumbnail should fail",
     );
     let upload_error = expect_streamable_error(
-        registration
-            .upload_video_thumbnail("rejected", &image_file)
-            .await,
+        rejected.upload_thumbnail(&image_file).await,
         "rejected custom thumbnail should fail",
     );
     let session_error = expect_streamable_error(
-        registration.set_video_thumbnail_frame("expired", 1.0).await,
+        expired.set_thumbnail_frame(1.0).await,
         "expired thumbnail session should fail",
     );
     let rate_limit_error = expect_streamable_error(
-        registration
-            .upload_video_thumbnail("rate-limited", &image_file)
-            .await,
+        rate_limited.upload_thumbnail(&image_file).await,
         "rate-limited thumbnail upload should fail",
     );
 
@@ -1215,25 +1228,25 @@ async fn remote_video_thumbnail_branches_are_reversible() {
     let client = remote_authenticated_client()
         .await
         .expect("shared remote account should authenticate");
-    let video = client
+    let mut video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
     let image_file = image_path("png.png");
 
-    let custom_result = client
-        .upload_video_thumbnail(&video.shortcode, &image_file)
-        .await;
+    video
+        .upload_thumbnail(&image_file)
+        .await
+        .expect("remote custom thumbnail upload should succeed");
+    assert_eq!(video.thumbnail_offset.as_deref(), Some("-1"));
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    let restore_result = client
-        .set_video_thumbnail_frame(&video.shortcode, 0.5)
-        .await;
+    video
+        .set_thumbnail_frame(0.5)
+        .await
+        .expect("remote frame thumbnail restore should succeed");
     drop(client);
 
-    let custom = custom_result.expect("remote custom thumbnail upload should succeed");
-    assert_eq!(custom.thumbnail_offset.as_deref(), Some("-1"));
-    let restored = restore_result.expect("remote frame thumbnail restore should succeed");
-    assert_ne!(restored.thumbnail_offset.as_deref(), Some("-1"));
+    assert_ne!(video.thumbnail_offset.as_deref(), Some("-1"));
 }
 
 #[test]

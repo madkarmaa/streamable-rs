@@ -1270,63 +1270,6 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         Ok(Video::new(Arc::clone(&self.core), data))
     }
 
-    /// Uses a video frame at the given offset as its thumbnail. Works without signing in.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// let video = client.set_video_thumbnail_frame("abc123", 12.5).await?;
-    /// assert_eq!(video.thumbnail_offset.as_deref(), Some("12.5"));
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when `seconds` is negative or non-finite, the request fails, Streamable
-    /// rejects the change, or the response does not match the video model.
-    pub async fn set_video_thumbnail_frame(
-        &self,
-        shortcode: &str,
-        seconds: f64,
-    ) -> Result<Video<State, T>> {
-        if !seconds.is_finite() || seconds < 0.0 {
-            return Err(StreamableError::InvalidThumbnailOffset { seconds });
-        }
-
-        let data = self
-            .execute(&models::SetVideoThumbnailFrameRequest::new(
-                shortcode, seconds,
-            ))
-            .await?;
-        Ok(Video::new(Arc::clone(&self.core), data))
-    }
-
-    /// Uploads an image as a video's custom thumbnail. Works without signing in.
-    ///
-    /// The image format is detected from file contents. The multipart upload preserves the local
-    /// file name and detected media type.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// let video = client.upload_video_thumbnail("abc123", "thumbnail.png").await?;
-    /// assert_eq!(video.thumbnail_offset.as_deref(), Some("-1"));
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the path cannot be read, is not a recognized image, the request
-    /// fails, Streamable rejects the change, or the response does not match the video model.
-    pub async fn upload_video_thumbnail(
-        &self,
-        shortcode: &str,
-        image_file: impl AsRef<Path>,
-    ) -> Result<Video<State, T>> {
-        let data = upload_video_thumbnail(&self.core, shortcode, image_file.as_ref()).await?;
-        Ok(Video::new(Arc::clone(&self.core), data))
-    }
-
     /// Deletes a video. Works without signing in.
     ///
     /// ```no_run
