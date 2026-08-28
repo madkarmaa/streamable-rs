@@ -3802,3 +3802,52 @@ async fn collection_resource_updates_and_deletes_after_client_is_dropped() {
         .await
         .expect("client-bound collection deletion should succeed");
 }
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn anonymous_capable_collection_resource_is_invalidated_by_logout() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/collections"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "shortcodes": ["first"] })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": null,
+            "videos": [{ "shortcode": "first", "title": "First", "plays": 0 }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let shortcodes = vec!["first".to_string()];
+    let collection = client
+        .create_collection(&shortcodes, None)
+        .await
+        .expect("collection creation should succeed");
+    let _client = client.logout();
+
+    let error = collection
+        .delete()
+        .await
+        .expect_err("logout should invalidate anonymous-capable collection operations");
+    assert!(matches!(error, StreamableError::ResourceInvalidated));
+    assert_eq!(collection.shortcode(), "shared1");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.method.as_str() == "DELETE")
+    );
+}

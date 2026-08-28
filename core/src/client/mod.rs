@@ -306,6 +306,15 @@ struct ResourceCore<T> {
     generation: u64,
 }
 
+impl<T> Clone for ResourceCore<T> {
+    fn clone(&self) -> Self {
+        Self {
+            core: Arc::clone(&self.core),
+            generation: self.generation,
+        }
+    }
+}
+
 impl<T> ResourceCore<T> {
     fn new(core: Arc<ClientCore<T>>) -> Self {
         let generation = lock_unpoisoned(&core.session).generation;
@@ -1101,7 +1110,11 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .execute(&models::CreateCollectionRequest::new(shortcodes, title))
             .await?;
         let shortcode = data.shortcode.clone();
-        Ok(Collection::new(Arc::clone(&self.core), shortcode, data))
+        Ok(Collection::new(
+            ResourceCore::new(Arc::clone(&self.core)),
+            shortcode,
+            data,
+        ))
     }
 
     /// Counts collections belonging to the current client session. Works without signing in.
@@ -1149,7 +1162,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .into_iter()
             .map(|data| {
                 let shortcode = data.shortcode.clone();
-                Collection::new(Arc::clone(&self.core), shortcode, data)
+                Collection::new(ResourceCore::new(Arc::clone(&self.core)), shortcode, data)
             })
             .collect();
         Ok(CollectionPage::new(collections))
@@ -1174,7 +1187,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .execute(&models::GetCollectionRequest::new(shortcode))
             .await?;
         Ok(Collection::new(
-            Arc::clone(&self.core),
+            ResourceCore::new(Arc::clone(&self.core)),
             shortcode.to_string(),
             data,
         ))
@@ -1203,7 +1216,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .execute(&models::UpdateCollectionTitleRequest::new(shortcode, title))
             .await?;
         Ok(Collection::new(
-            Arc::clone(&self.core),
+            ResourceCore::new(Arc::clone(&self.core)),
             shortcode.to_string(),
             data,
         ))
@@ -1237,7 +1250,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             ))
             .await?;
         Ok(Collection::new(
-            Arc::clone(&self.core),
+            ResourceCore::new(Arc::clone(&self.core)),
             shortcode.to_string(),
             data,
         ))

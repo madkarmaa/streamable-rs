@@ -1,6 +1,4 @@
-use super::{
-    Authenticated, AuthenticatedStreamableClient, ClientCore, ResourceCore, StreamableClient,
-};
+use super::{Authenticated, AuthenticatedStreamableClient, ResourceCore, StreamableClient};
 use crate::{
     Result, models,
     transport::{DefaultTransport, HttpTransport},
@@ -545,7 +543,7 @@ impl<T> Deref for Label<T> {
 /// ```
 pub struct Collection<State = super::Unauthenticated, T = DefaultTransport, D = models::Collection>
 {
-    core: Arc<ClientCore<T>>,
+    core: ResourceCore<T>,
     shortcode: String,
     data: D,
     state: PhantomData<State>,
@@ -581,7 +579,7 @@ pub type CollectionDetails<State = super::Unauthenticated, T = DefaultTransport>
     Collection<State, T, models::CollectionDetails>;
 
 impl<State, T, D> Collection<State, T, D> {
-    pub(super) const fn new(core: Arc<ClientCore<T>>, shortcode: String, data: D) -> Self {
+    pub(super) const fn new(core: ResourceCore<T>, shortcode: String, data: D) -> Self {
         Self {
             core,
             shortcode,
@@ -645,7 +643,7 @@ impl<State: Sync, T: HttpTransport, D: Sync> Collection<State, T, D> {
             .execute(&models::GetCollectionRequest::new(&self.shortcode))
             .await?;
         Ok(Collection::new(
-            Arc::clone(&self.core),
+            self.core.clone(),
             self.shortcode.clone(),
             data,
         ))
@@ -671,7 +669,7 @@ impl<State: Sync, T: HttpTransport, D: Sync> Collection<State, T, D> {
             ))
             .await?;
         Ok(Collection::new(
-            Arc::clone(&self.core),
+            self.core.clone(),
             self.shortcode.clone(),
             data,
         ))
@@ -697,7 +695,7 @@ impl<State: Sync, T: HttpTransport, D: Sync> Collection<State, T, D> {
             ))
             .await?;
         Ok(Collection::new(
-            Arc::clone(&self.core),
+            self.core.clone(),
             self.shortcode.clone(),
             data,
         ))
