@@ -2124,12 +2124,12 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
-async fn remote_video_labels_can_be_assigned() {
+async fn remote_video_label_resources_can_be_assigned_and_cleared() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
     let client = remote_authenticated_client()
         .await
         .expect("shared remote account should authenticate");
-    let video = client
+    let mut video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
@@ -2139,10 +2139,20 @@ async fn remote_video_labels_can_be_assigned() {
         .await
         .expect("remote label creation should succeed");
 
-    client
-        .set_video_labels(&video.shortcode, &[label.id])
+    video
+        .set_labels(&[label.id])
         .await
         .expect("remote video label assignment should succeed");
+    video
+        .remove_labels(&[label.id, u64::MAX])
+        .await
+        .expect("remote selected video label removal should succeed");
+    assert!(video.labels.is_empty());
+    video
+        .clear_labels()
+        .await
+        .expect("remote video label clearing should succeed");
+    assert!(video.labels.is_empty());
     drop(client);
 }
 
