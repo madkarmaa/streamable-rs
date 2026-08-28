@@ -3739,6 +3739,44 @@ async fn resources_created_after_logout_use_the_new_generation() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn stale_video_operations_fail_before_local_shortcuts() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(&client, "abc123", &[]);
+    let _client = client.logout();
+
+    let remove_error = video
+        .remove_labels(&[])
+        .await
+        .expect_err("an empty removal must still reject a stale resource");
+    assert!(matches!(remove_error, StreamableError::ResourceInvalidated));
+    let frame_error = video
+        .set_thumbnail_frame(f64::NAN)
+        .await
+        .expect_err("thumbnail validation must not hide stale resources");
+    assert!(matches!(frame_error, StreamableError::ResourceInvalidated));
+    let upload_error = video
+        .upload_thumbnail("missing-thumbnail.png")
+        .await
+        .expect_err("file validation must not hide stale resources");
+    assert!(matches!(upload_error, StreamableError::ResourceInvalidated));
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(requests.len(), 1);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn registration_chains_into_label_resource_with_retained_session() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
