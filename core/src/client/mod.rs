@@ -518,7 +518,7 @@ pub struct StreamableClient<State = Unauthenticated, T = DefaultTransport> {
 /// ```
 #[must_use = "the upload must be completed or explicitly cancelled"]
 pub struct VideoUpload<State = Unauthenticated, T = DefaultTransport> {
-    core: Arc<ClientCore<T>>,
+    core: ResourceCore<T>,
     upload_info: models::UploadInfo,
     video_file: PathBuf,
     size: u64,
@@ -565,7 +565,7 @@ impl<State: Sync, T: HttpTransport> VideoUpload<State, T> {
     #[must_use]
     pub fn handle(&self) -> VideoUploadHandle<State, T> {
         VideoUploadHandle {
-            core: Arc::clone(&self.core),
+            core: self.core.clone(),
             shortcode: self.upload_info.shortcode.clone(),
             state: PhantomData,
         }
@@ -592,6 +592,7 @@ impl<State: Sync, T: HttpTransport> VideoUpload<State, T> {
         fields(shortcode = %self.upload_info.shortcode, upload.bytes = self.size)
     )]
     pub async fn complete(self) -> Result<Video<State, T>> {
+        self.core.ensure_valid()?;
         let Self {
             core,
             upload_info,
@@ -604,14 +605,14 @@ impl<State: Sync, T: HttpTransport> VideoUpload<State, T> {
         let shortcode = upload_info.shortcode.clone();
         tracing::debug!("starting allocated video upload");
         let result = async {
-            initialize_video_upload(&core, &upload_info, size, original_name, title).await?;
-            upload_video_file_to_s3(&core, &upload_info, size, &video_file).await?;
-            transcode_video_after_upload(&core, &upload_info).await
+            initialize_video_upload(&core.core, &upload_info, size, original_name, title).await?;
+            upload_video_file_to_s3(&core.core, &upload_info, size, &video_file).await?;
+            transcode_video_after_upload(&core.core, &upload_info).await
         }
         .await;
 
-        let data = finish_upload_or_rollback(&core, &shortcode, result).await?;
-        Ok(Video::new(ResourceCore::new(core), data))
+        let data = finish_upload_or_rollback(&core.core, &shortcode, result).await?;
+        Ok(Video::new(core, data))
     }
 
     /// Cancels this allocated upload on Streamable.
@@ -633,7 +634,11 @@ impl<State: Sync, T: HttpTransport> VideoUpload<State, T> {
         fields(shortcode = %self.upload_info.shortcode)
     )]
     pub async fn cancel(self) -> Result<()> {
-        cancel_video_upload(&self.core, &self.upload_info.shortcode).await
+        self.core
+            .execute(&models::CancelVideoUploadRequest::new(
+                &self.upload_info.shortcode,
+            ))
+            .await
     }
 }
 
@@ -650,7 +655,7 @@ impl<State: Sync, T: HttpTransport> VideoUpload<State, T> {
 /// # Ok(()) }
 /// ```
 pub struct VideoUploadHandle<State = Unauthenticated, T = DefaultTransport> {
-    core: Arc<ClientCore<T>>,
+    core: ResourceCore<T>,
     shortcode: String,
     state: PhantomData<State>,
 }
@@ -667,7 +672,7 @@ impl<State, T> std::fmt::Debug for VideoUploadHandle<State, T> {
 impl<State, T> Clone for VideoUploadHandle<State, T> {
     fn clone(&self) -> Self {
         Self {
-            core: Arc::clone(&self.core),
+            core: self.core.clone(),
             shortcode: self.shortcode.clone(),
             state: PhantomData,
         }
@@ -708,7 +713,9 @@ impl<State: Sync, T: HttpTransport> VideoUploadHandle<State, T> {
         fields(shortcode = %self.shortcode)
     )]
     pub async fn cancel(&self) -> Result<()> {
-        cancel_video_upload(&self.core, &self.shortcode).await
+        self.core
+            .execute(&models::CancelVideoUploadRequest::new(&self.shortcode))
+            .await
     }
 }
 
@@ -1477,7 +1484,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         let upload_info = self.generate_shortcode(size).await?;
 
         Ok(VideoUpload {
-            core: Arc::clone(&self.core),
+            core: ResourceCore::new(Arc::clone(&self.core)),
             upload_info,
             video_file,
             size,

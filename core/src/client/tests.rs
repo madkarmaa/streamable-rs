@@ -819,6 +819,60 @@ async fn allocated_upload_handle_cancels_before_initialization() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn video_upload_and_handle_are_invalidated_by_logout() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let video_path = media_path("webm.webm");
+    let video_size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_upload_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let upload = client
+        .begin_video_upload(video_path, None)
+        .await
+        .expect("upload should allocate a shortcode");
+    let handle = upload.handle();
+    let _client = client.logout();
+
+    let handle_error = handle
+        .cancel()
+        .await
+        .expect_err("logout should invalidate the upload handle");
+    assert!(matches!(handle_error, StreamableError::ResourceInvalidated));
+    let upload_error = upload
+        .complete()
+        .await
+        .expect_err("logout should invalidate the allocated upload");
+    assert!(matches!(upload_error, StreamableError::ResourceInvalidated));
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.url.path()))
+            .collect::<Vec<_>>(),
+        [("POST", "/users"), ("GET", "/api/v1/uploads/shortcode")]
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn video_upload_rejects_non_video_before_network_access() {
     let mock_server = MockServer::start().await;
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
