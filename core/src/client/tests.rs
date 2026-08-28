@@ -337,7 +337,7 @@ fn bound_mock_video<State, T>(
 ) -> Video<State, T> {
     let data = serde_json::from_value(mock_video(shortcode, false))
         .expect("mock video should match the wire model");
-    Video::new(Arc::clone(&client.core), data)
+    Video::new(ResourceCore::new(Arc::clone(&client.core)), data)
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -353,7 +353,7 @@ fn bound_mock_labeled_video<T>(
         .collect::<Vec<_>>()
         .into();
     let data = serde_json::from_value(value).expect("mock video should match the wire model");
-    Video::new(Arc::clone(&client.core), data)
+    Video::new(ResourceCore::new(Arc::clone(&client.core)), data)
 }
 
 #[allow(clippy::panic)]
@@ -440,6 +440,7 @@ async fn logout_does_not_accept_cookies_from_an_in_flight_request() {
         send_request(
             &request_core.transport,
             &request_core.session,
+            None,
             Method::GET,
             request_endpoint,
             HeaderMap::new(),
@@ -3599,6 +3600,49 @@ async fn video_resource_deletes_after_originating_client_is_dropped() {
         .expect("delete request should be recorded");
     assert!(delete_request.body.is_empty());
     assert!(!delete_request.headers.contains_key("content-type"));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_resource_is_invalidated_by_logout() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let video = client
+        .get_video("abc123")
+        .await
+        .expect("video lookup should succeed");
+    let _client = client.logout();
+
+    let error = video
+        .delete()
+        .await
+        .expect_err("logout should invalidate the video resource");
+    assert!(matches!(error, StreamableError::ResourceInvalidated));
+    assert_eq!(video.shortcode, "abc123");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.method.as_str() == "DELETE")
+    );
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]

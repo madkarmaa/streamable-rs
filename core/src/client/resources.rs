@@ -1,4 +1,6 @@
-use super::{Authenticated, AuthenticatedStreamableClient, ClientCore, StreamableClient};
+use super::{
+    Authenticated, AuthenticatedStreamableClient, ClientCore, ResourceCore, StreamableClient,
+};
 use crate::{
     Result, models,
     transport::{DefaultTransport, HttpTransport},
@@ -126,7 +128,7 @@ impl<T> DerefMut for Registration<T> {
 /// # Ok(()) }
 /// ```
 pub struct Video<State = super::Unauthenticated, T = DefaultTransport> {
-    pub(super) core: Arc<ClientCore<T>>,
+    pub(super) core: ResourceCore<T>,
     data: models::Video,
     state: PhantomData<State>,
 }
@@ -143,7 +145,7 @@ impl<State, T> fmt::Debug for Video<State, T> {
 }
 
 impl<State, T> Video<State, T> {
-    pub(super) const fn new(core: Arc<ClientCore<T>>, data: models::Video) -> Self {
+    pub(super) const fn new(core: ResourceCore<T>, data: models::Video) -> Self {
         Self {
             core,
             data,
@@ -299,6 +301,7 @@ impl<State: Sync, T: HttpTransport> Video<State, T> {
     ///
     /// Returns an error for an invalid offset, a failed request, or an invalid response.
     pub async fn set_thumbnail_frame(&mut self, seconds: f64) -> Result<&models::Video> {
+        self.core.ensure_valid()?;
         if !seconds.is_finite() || seconds < 0.0 {
             return Err(crate::StreamableError::InvalidThumbnailOffset { seconds });
         }
@@ -393,6 +396,7 @@ impl<T: HttpTransport> Video<Authenticated, T> {
     /// Returns an error when the video cannot be refreshed, Streamable rejects the assignment,
     /// or a request fails.
     pub async fn remove_labels(&mut self, label_ids: &[u64]) -> Result<()> {
+        self.core.ensure_valid()?;
         if label_ids.is_empty() {
             return Ok(());
         }

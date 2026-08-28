@@ -117,6 +117,7 @@ impl SessionState {
 async fn send_request<T: HttpTransport>(
     transport: &T,
     session: &Mutex<SessionState>,
+    resource_generation: Option<u64>,
     method: Method,
     endpoint_url: Url,
     mut headers: HeaderMap,
@@ -124,6 +125,9 @@ async fn send_request<T: HttpTransport>(
 ) -> Result<ApiResponse> {
     let (request_generation, cookie) = {
         let session = lock_unpoisoned(session);
+        if resource_generation.is_some_and(|generation| generation != session.generation) {
+            return Err(StreamableError::ResourceInvalidated);
+        }
         (
             session.generation,
             cookie_header(&session.cookies, &endpoint_url)?,
@@ -251,12 +255,23 @@ impl<T: HttpTransport> ClientCore<T> {
         lock_unpoisoned(&self.session).invalidate();
     }
 
+    async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
+    where
+        Req: ApiRequest + Sync,
+    {
+        self.execute_for_generation(req, None).await
+    }
+
     #[tracing::instrument(
         level = "debug",
         skip_all,
         fields(request.type = std::any::type_name::<Req>())
     )]
-    async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
+    async fn execute_for_generation<Req>(
+        &self,
+        req: &Req,
+        resource_generation: Option<u64>,
+    ) -> Result<Req::Response>
     where
         Req: ApiRequest + Sync,
     {
@@ -265,6 +280,7 @@ impl<T: HttpTransport> ClientCore<T> {
             let response = send_request(
                 &self.transport,
                 &self.session,
+                resource_generation,
                 req.method(),
                 endpoint_url,
                 req.headers(),
@@ -285,11 +301,44 @@ impl<T: HttpTransport> ClientCore<T> {
     }
 }
 
+struct ResourceCore<T> {
+    core: Arc<ClientCore<T>>,
+    generation: u64,
+}
+
+impl<T> ResourceCore<T> {
+    fn new(core: Arc<ClientCore<T>>) -> Self {
+        let generation = lock_unpoisoned(&core.session).generation;
+        Self { core, generation }
+    }
+}
+
+impl<T: HttpTransport> ResourceCore<T> {
+    fn ensure_valid(&self) -> Result<()> {
+        if lock_unpoisoned(&self.core.session).generation == self.generation {
+            Ok(())
+        } else {
+            Err(StreamableError::ResourceInvalidated)
+        }
+    }
+
+    async fn execute<Req>(&self, req: &Req) -> Result<Req::Response>
+    where
+        Req: ApiRequest + Sync,
+    {
+        self.ensure_valid()?;
+        self.core
+            .execute_for_generation(req, Some(self.generation))
+            .await
+    }
+}
+
 async fn upload_video_thumbnail<T: HttpTransport>(
-    core: &ClientCore<T>,
+    core: &ResourceCore<T>,
     shortcode: &str,
     image_file: &Path,
 ) -> Result<models::Video> {
+    core.ensure_valid()?;
     let image_file = std::fs::canonicalize(image_file).inspect_err(|_| {
         tracing::debug!(
             error.kind = "io",
@@ -553,7 +602,7 @@ impl<State: Sync, T: HttpTransport> VideoUpload<State, T> {
         .await;
 
         let data = finish_upload_or_rollback(&core, &shortcode, result).await?;
-        Ok(Video::new(core, data))
+        Ok(Video::new(ResourceCore::new(core), data))
     }
 
     /// Cancels this allocated upload on Streamable.
@@ -1306,7 +1355,7 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         let data = self
             .execute(&models::GetVideoRequest::new(shortcode))
             .await?;
-        Ok(Video::new(Arc::clone(&self.core), data))
+        Ok(Video::new(ResourceCore::new(Arc::clone(&self.core)), data))
     }
 
     /// Deletes a video. Works without signing in.
