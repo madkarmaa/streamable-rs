@@ -3701,6 +3701,44 @@ async fn video_resource_is_invalidated_by_logout() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn resources_created_after_logout_use_the_new_generation() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_string("true"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed")
+        .logout();
+    let video = client
+        .get_video("abc123")
+        .await
+        .expect("post-logout video lookup should succeed");
+
+    video
+        .delete()
+        .await
+        .expect("post-logout resource should remain valid");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn registration_chains_into_label_resource_with_retained_session() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
