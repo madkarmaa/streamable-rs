@@ -340,6 +340,22 @@ fn bound_mock_video<State, T>(
     Video::new(Arc::clone(&client.core), data)
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_labeled_video<T>(
+    client: &AuthenticatedStreamableClient<T>,
+    shortcode: &str,
+    label_ids: &[u64],
+) -> Video<Authenticated, T> {
+    let mut value = mock_video(shortcode, false);
+    value["labels"] = label_ids
+        .iter()
+        .map(|id| json!({ "id": id }))
+        .collect::<Vec<_>>()
+        .into();
+    let data = serde_json::from_value(value).expect("mock video should match the wire model");
+    Video::new(Arc::clone(&client.core), data)
+}
+
 #[allow(clippy::panic)]
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
     match result {
@@ -1895,6 +1911,36 @@ async fn set_video_labels_posts_empty_replacement() {
         .set_video_labels("abc123", &[])
         .await
         .expect("empty video label replacement should succeed");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_clear_labels_posts_empty_replacement_and_updates_snapshot() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "labels": [] })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[42, 7]);
+
+    video
+        .clear_labels()
+        .await
+        .expect("video label clearing should succeed");
+
+    assert!(video.labels.is_empty());
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]

@@ -355,6 +355,28 @@ impl<T: HttpTransport> Video<Authenticated, T> {
             ))
             .await
     }
+
+    /// Removes every label from this video.
+    ///
+    /// ```no_run
+    /// # async fn run(video: &mut streamable::Video<streamable::Authenticated>) -> streamable::Result<()> {
+    /// video.clear_labels().await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when Streamable rejects the assignment or the request fails.
+    pub async fn clear_labels(&mut self) -> Result<()> {
+        self.core
+            .execute(&models::SetVideoLabelsRequest::new(
+                &self.data.shortcode,
+                &[],
+            ))
+            .await?;
+        self.data.labels.clear();
+        Ok(())
+    }
 }
 
 impl<State, T> Deref for Video<State, T> {
