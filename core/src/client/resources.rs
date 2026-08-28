@@ -444,7 +444,7 @@ impl<State, T> Deref for Video<State, T> {
 /// # Ok(()) }
 /// ```
 pub struct Label<T = DefaultTransport> {
-    core: Arc<ClientCore<T>>,
+    core: ResourceCore<T>,
     data: models::Label,
 }
 
@@ -458,7 +458,7 @@ impl<T> fmt::Debug for Label<T> {
 }
 
 impl<T> Label<T> {
-    pub(super) const fn new(core: Arc<ClientCore<T>>, data: models::Label) -> Self {
+    pub(super) const fn new(core: ResourceCore<T>, data: models::Label) -> Self {
         Self { core, data }
     }
 
@@ -785,6 +785,6 @@ impl<State, T> CollectionPage<State, T> {
 
 impl<T> StreamableClient<Authenticated, T> {
     pub(super) fn bind_label(&self, data: models::Label) -> Label<T> {
-        Label::new(Arc::clone(&self.core), data)
+        Label::new(ResourceCore::new(Arc::clone(&self.core)), data)
     }
 }

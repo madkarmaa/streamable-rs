@@ -3688,6 +3688,68 @@ async fn registration_chains_into_label_resource_with_retained_session() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn label_resource_stays_invalid_after_logout_and_relogin() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "name": "temporary",
+            "id": 174_173
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/check"))
+        .and(NoCookieHeader)
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("set-cookie", "session=new-session; Path=/; HttpOnly")
+                .set_body_json(authenticated_user(email)),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let label = client
+        .create_label("temporary")
+        .await
+        .expect("label creation should succeed");
+    let client = client.logout();
+    let _client = client
+        .login(email.to_string(), password.to_string())
+        .await
+        .expect("login should succeed");
+
+    let error = label
+        .delete()
+        .await
+        .expect_err("a new login must not reactivate an old label");
+    assert!(matches!(error, StreamableError::ResourceInvalidated));
+    assert_eq!(label.name, "temporary");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.method.as_str() == "DELETE")
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn collection_resource_updates_and_deletes_after_client_is_dropped() {
     let mock_server = MockServer::start().await;
     Mock::given(method("POST"))
