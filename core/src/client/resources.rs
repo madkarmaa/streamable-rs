@@ -377,6 +377,50 @@ impl<T: HttpTransport> Video<Authenticated, T> {
         self.data.labels.clear();
         Ok(())
     }
+
+    /// Removes the supplied labels from this video.
+    ///
+    /// Label identifiers that are not assigned to the video are ignored.
+    ///
+    /// ```no_run
+    /// # async fn run(video: &mut streamable::Video<streamable::Authenticated>) -> streamable::Result<()> {
+    /// video.remove_labels(&[3, 1]).await?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the video cannot be refreshed, Streamable rejects the assignment,
+    /// or a request fails.
+    pub async fn remove_labels(&mut self, label_ids: &[u64]) -> Result<()> {
+        if label_ids.is_empty() {
+            return Ok(());
+        }
+
+        self.refresh().await?;
+        let remaining_ids = self
+            .data
+            .labels
+            .iter()
+            .filter(|label| !label_ids.contains(&label.id))
+            .map(|label| label.id)
+            .collect::<Vec<_>>();
+
+        if remaining_ids.len() == self.data.labels.len() {
+            return Ok(());
+        }
+
+        self.core
+            .execute(&models::SetVideoLabelsRequest::new(
+                &self.data.shortcode,
+                &remaining_ids,
+            ))
+            .await?;
+        self.data
+            .labels
+            .retain(|label| !label_ids.contains(&label.id));
+        Ok(())
+    }
 }
 
 impl<State, T> Deref for Video<State, T> {

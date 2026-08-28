@@ -1945,6 +1945,126 @@ async fn video_clear_labels_posts_empty_replacement_and_updates_snapshot() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn video_remove_labels_refreshes_filters_and_updates_snapshot() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    let mut refreshed = mock_video("abc123", false);
+    refreshed["labels"] = json!([{ "id": 42 }, { "id": 7 }, { "id": 18 }]);
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(refreshed))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "labels": [42, 18] })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[1]);
+
+    video
+        .remove_labels(&[7, 999])
+        .await
+        .expect("selected video labels should be removed");
+
+    let remaining_ids = video
+        .labels
+        .iter()
+        .map(|label| label.id)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_ids, [42, 18]);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_remove_labels_skips_replacement_when_ids_are_absent() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    let mut refreshed = mock_video("abc123", false);
+    refreshed["labels"] = json!([{ "id": 42 }, { "id": 7 }]);
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(refreshed))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[1]);
+
+    video
+        .remove_labels(&[999])
+        .await
+        .expect("absent video label ids should be ignored");
+
+    let remaining_ids = video
+        .labels
+        .iter()
+        .map(|label| label.id)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_ids, [42, 7]);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_remove_labels_with_empty_ids_makes_no_requests() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[42]);
+
+    video
+        .remove_labels(&[])
+        .await
+        .expect("empty video label removal should be a no-op");
+
+    assert_eq!(video.labels[0].id, 42);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn set_video_labels_maps_assignment_and_common_errors() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
