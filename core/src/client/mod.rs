@@ -1050,7 +1050,7 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
             .await
     }
 
-    /// Returns a new signed-out client.
+    /// Returns a new signed-out client and invalidates resources created before logout.
     ///
     /// ```no_run
     /// fn logout(client: streamable::AuthenticatedStreamableClient) {

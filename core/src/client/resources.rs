@@ -86,7 +86,7 @@ impl<T> Registration<T> {
         &self.client
     }
 
-    /// Signs out and returns an unauthenticated client.
+    /// Signs out, invalidates existing resources, and returns an unauthenticated client.
     ///
     /// ```no_run
     /// # fn run(registration: streamable::Registration) {
