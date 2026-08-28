@@ -32,6 +32,10 @@ pub enum StreamableError {
         message: String,
     },
 
+    /// A resource's originating client session was invalidated by logout.
+    #[error("the resource was invalidated when its client logged out")]
+    ResourceInvalidated,
+
     /// The password does not meet the rules.
     #[error("{message}")]
     PasswordValidation {
@@ -296,6 +300,7 @@ impl StreamableError {
             Self::EmailAlreadyInUse { .. } => "email_already_in_use",
             Self::InvalidCredentials { .. } => "invalid_credentials",
             Self::InvalidSession { .. } => "invalid_session",
+            Self::ResourceInvalidated => "resource_invalidated",
             Self::PasswordValidation { .. } => "password_validation",
             Self::LabelAlreadyExists { .. } => "label_already_exists",
             Self::LabelNotFound { .. } => "label_not_found",
