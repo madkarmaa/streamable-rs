@@ -91,6 +91,19 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+#[derive(Default)]
+struct SessionState {
+    cookies: CookieStore,
+    generation: u64,
+}
+
+impl SessionState {
+    fn invalidate(&mut self) {
+        self.cookies = CookieStore::default();
+        self.generation = self.generation.wrapping_add(1);
+    }
+}
+
 #[tracing::instrument(
     level = "debug",
     skip_all,
@@ -103,13 +116,19 @@ fn lock_unpoisoned<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 )]
 async fn send_request<T: HttpTransport>(
     transport: &T,
-    cookies: &Mutex<CookieStore>,
+    session: &Mutex<SessionState>,
     method: Method,
     endpoint_url: Url,
     mut headers: HeaderMap,
     body: Body,
 ) -> Result<ApiResponse> {
-    let cookie = cookie_header(cookies, &endpoint_url)?;
+    let (request_generation, cookie) = {
+        let session = lock_unpoisoned(session);
+        (
+            session.generation,
+            cookie_header(&session.cookies, &endpoint_url)?,
+        )
+    };
     tracing::debug!(cookie.attached = cookie.is_some(), "prepared API request");
     if let Some(cookie) = cookie {
         headers.insert(COOKIE, cookie);
@@ -134,7 +153,12 @@ async fn send_request<T: HttpTransport>(
         "received API response"
     );
 
-    store_response_cookies(cookies, &endpoint_url, &response.headers);
+    store_response_cookies(
+        session,
+        request_generation,
+        &endpoint_url,
+        &response.headers,
+    );
     Ok(ApiResponse::new(
         response.status,
         endpoint_url,
@@ -142,8 +166,8 @@ async fn send_request<T: HttpTransport>(
     ))
 }
 
-fn cookie_header(cookies: &Mutex<CookieStore>, url: &Url) -> Result<Option<HeaderValue>> {
-    let value = lock_unpoisoned(cookies)
+fn cookie_header(cookies: &CookieStore, url: &Url) -> Result<Option<HeaderValue>> {
+    let value = cookies
         .get_request_values(url)
         .map(|(name, value)| format!("{name}={value}"))
         .collect::<Vec<_>>()
@@ -157,7 +181,12 @@ fn cookie_header(cookies: &Mutex<CookieStore>, url: &Url) -> Result<Option<Heade
         .map_err(StreamableError::InvalidHeader)
 }
 
-fn store_response_cookies(cookies: &Mutex<CookieStore>, url: &Url, headers: &HeaderMap) {
+fn store_response_cookies(
+    session: &Mutex<SessionState>,
+    request_generation: u64,
+    url: &Url,
+    headers: &HeaderMap,
+) {
     let response_cookies = headers
         .get_all(http::header::SET_COOKIE)
         .iter()
@@ -165,12 +194,17 @@ fn store_response_cookies(cookies: &Mutex<CookieStore>, url: &Url, headers: &Hea
         .map(str::to_owned)
         .collect::<Vec<_>>();
     let received = response_cookies.len();
-    let mut store = lock_unpoisoned(cookies);
+    let mut session = lock_unpoisoned(session);
+    if session.generation != request_generation {
+        tracing::debug!(received, stored = 0, "ignored stale response cookies");
+        return;
+    }
+
     let stored = response_cookies
         .into_iter()
-        .filter(|cookie| store.parse(cookie, url).is_ok())
+        .filter(|cookie| session.cookies.parse(cookie, url).is_ok())
         .count();
-    drop(store);
+    drop(session);
 
     tracing::debug!(received, stored, "processed response cookies");
 }
@@ -208,11 +242,15 @@ impl EndpointRouting {
 
 struct ClientCore<T> {
     transport: T,
-    cookies: Mutex<CookieStore>,
+    session: Mutex<SessionState>,
     endpoint_routing: EndpointRouting,
 }
 
 impl<T: HttpTransport> ClientCore<T> {
+    fn invalidate_session(&self) {
+        lock_unpoisoned(&self.session).invalidate();
+    }
+
     #[tracing::instrument(
         level = "debug",
         skip_all,
@@ -226,7 +264,7 @@ impl<T: HttpTransport> ClientCore<T> {
             let endpoint_url = self.endpoint_routing.resolve(req.url())?;
             let response = send_request(
                 &self.transport,
-                &self.cookies,
+                &self.session,
                 req.method(),
                 endpoint_url,
                 req.headers(),
@@ -673,7 +711,7 @@ impl<T> StreamableClient<Unauthenticated, T> {
         Self {
             core: Arc::new(ClientCore {
                 transport,
-                cookies: Mutex::new(CookieStore::default()),
+                session: Mutex::new(SessionState::default()),
                 endpoint_routing,
             }),
             state: Unauthenticated { user: None },
@@ -957,7 +995,7 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
     /// ```
     #[must_use]
     pub fn logout(self) -> UnauthenticatedStreamableClient<T> {
-        *lock_unpoisoned(&self.core.cookies) = CookieStore::default();
+        self.core.invalidate_session();
         StreamableClient {
             core: self.core,
             state: Unauthenticated { user: None },
@@ -977,7 +1015,8 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
 
     fn session_cookie(&self) -> Result<String> {
         let url = self.core.endpoint_routing.resolve(AUTH_BASE_URL)?;
-        lock_unpoisoned(&self.core.cookies)
+        lock_unpoisoned(&self.core.session)
+            .cookies
             .get_request_values(&url)
             .find_map(|(name, value)| (name == "session").then(|| value.to_string()))
             .filter(|session| !session.is_empty())

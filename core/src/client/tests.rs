@@ -388,6 +388,84 @@ impl HttpTransport for RecordingTransport {
     }
 }
 
+#[derive(Clone, Default)]
+struct DelayedCookieTransport {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl HttpTransport for DelayedCookieTransport {
+    type Error = std::io::Error;
+
+    fn execute(
+        &self,
+        _request: crate::transport::Request,
+    ) -> impl std::future::Future<
+        Output = std::result::Result<crate::transport::Response, Self::Error>,
+    > + Send {
+        let started = Arc::clone(&self.started);
+        let release = Arc::clone(&self.release);
+        async move {
+            started.notify_one();
+            release.notified().await;
+            let mut headers = http::HeaderMap::new();
+            headers.insert(
+                http::header::SET_COOKIE,
+                http::HeaderValue::from_static("session=late-session; Path=/; HttpOnly"),
+            );
+            Ok(crate::transport::Response {
+                status: http::StatusCode::OK,
+                headers,
+                body: bytes::Bytes::new(),
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn logout_does_not_accept_cookies_from_an_in_flight_request() {
+    let transport = DelayedCookieTransport::default();
+    let started = Arc::clone(&transport.started);
+    let release = Arc::clone(&transport.release);
+    let core = Arc::new(ClientCore {
+        transport,
+        session: Mutex::new(SessionState::default()),
+        endpoint_routing: EndpointRouting::Production,
+    });
+    let endpoint =
+        Url::parse("https://api.streamable.com/resource").expect("test endpoint should be valid");
+    let request_endpoint = endpoint.clone();
+    let request_core = Arc::clone(&core);
+    let request = tokio::spawn(async move {
+        send_request(
+            &request_core.transport,
+            &request_core.session,
+            Method::GET,
+            request_endpoint,
+            HeaderMap::new(),
+            Body::Empty,
+        )
+        .await
+    });
+
+    started.notified().await;
+    core.invalidate_session();
+    release.notify_one();
+    request
+        .await
+        .expect("request task should finish")
+        .expect("transport response should be accepted");
+
+    let session = lock_unpoisoned(&core.session);
+    assert_eq!(session.generation, 1);
+    assert!(
+        cookie_header(&session.cookies, &endpoint)
+            .expect("stored cookies should produce a valid header")
+            .is_none()
+    );
+    drop(session);
+}
+
 #[tracing_test::traced_test]
 #[test]
 fn debug_tracing_reports_request_lifecycle_without_sensitive_payloads() {
