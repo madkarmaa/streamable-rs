@@ -356,6 +356,14 @@ fn bound_mock_labeled_video<T>(
     Video::new(ResourceCore::new(Arc::clone(&client.core)), data)
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_label<T>(client: &AuthenticatedStreamableClient<T>, id: u64, name: &str) -> Label<T> {
+    client.bind_label(models::Label {
+        id,
+        name: name.to_string(),
+    })
+}
+
 #[allow(clippy::panic)]
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
     match result {
@@ -1864,10 +1872,8 @@ async fn delete_label_sends_bodyless_request() {
         .await
         .expect("registration should succeed");
 
-    client
-        .delete_label(174_172)
-        .await
-        .expect("label deletion should succeed");
+    let label = bound_mock_label(client.client(), 174_172, "temporary");
+    label.delete().await.expect("label deletion should succeed");
 
     let requests = mock_server
         .received_requests()
@@ -1904,10 +1910,8 @@ async fn delete_label_reports_missing_id() {
         .await
         .expect("registration should succeed");
 
-    let error = expect_streamable_error(
-        client.delete_label(696_969).await,
-        "missing label deletion should fail",
-    );
+    let label = bound_mock_label(client.client(), 696_969, "missing");
+    let error = expect_streamable_error(label.delete().await, "missing label deletion should fail");
 
     assert!(matches!(
         error,
@@ -1940,8 +1944,9 @@ async fn rename_label_patches_trimmed_name_and_returns_label() {
         .await
         .expect("registration should succeed");
 
-    let label = client
-        .rename_label(174_172, "  renamed  ")
+    let mut label = bound_mock_label(client.client(), 174_172, "original");
+    label
+        .rename("  renamed  ")
         .await
         .expect("label rename should succeed");
 
@@ -1979,8 +1984,9 @@ async fn rename_label_reports_missing_id() {
         .await
         .expect("registration should succeed");
 
+    let mut label = bound_mock_label(client.client(), 696_969, "missing");
     let error = expect_streamable_error(
-        client.rename_label(696_969, "renamed").await,
+        label.rename("renamed").await,
         "missing label rename should fail",
     );
 
@@ -2012,8 +2018,9 @@ async fn set_video_labels_posts_ordered_absolute_replacement() {
         .await
         .expect("registration should succeed");
 
-    client
-        .set_video_labels("abc123", &[42, 7, 18])
+    let video = bound_mock_labeled_video(client.client(), "abc123", &[]);
+    video
+        .set_labels(&[42, 7, 18])
         .await
         .expect("video label replacement should succeed");
 }
@@ -2040,8 +2047,9 @@ async fn set_video_labels_posts_empty_replacement() {
         .await
         .expect("registration should succeed");
 
-    client
-        .set_video_labels("abc123", &[])
+    let video = bound_mock_labeled_video(client.client(), "abc123", &[42]);
+    video
+        .set_labels(&[])
         .await
         .expect("empty video label replacement should succeed");
 }
@@ -2228,16 +2236,19 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
         .await
         .expect("registration should succeed");
 
+    let rejected_video = bound_mock_labeled_video(client.client(), "rejected", &[]);
+    let expired_video = bound_mock_labeled_video(client.client(), "expired", &[]);
+    let rate_limited_video = bound_mock_labeled_video(client.client(), "rate-limited", &[]);
     let rejected = expect_streamable_error(
-        client.set_video_labels("rejected", &[7]).await,
+        rejected_video.set_labels(&[7]).await,
         "rejected video label replacement should fail",
     );
     let expired = expect_streamable_error(
-        client.set_video_labels("expired", &[7]).await,
+        expired_video.set_labels(&[7]).await,
         "expired video label replacement should fail",
     );
     let rate_limited = expect_streamable_error(
-        client.set_video_labels("rate-limited", &[7]).await,
+        rate_limited_video.set_labels(&[7]).await,
         "rate-limited video label replacement should fail",
     );
 
@@ -2299,18 +2310,18 @@ async fn remote_label_lifecycle() {
     let name = format!("label-{}", generate_random_password());
     let renamed_name = format!("{name}-renamed");
 
-    let created = client
+    let mut label = client
         .create_label(&name)
         .await
         .expect("remote label creation should succeed");
-    let renamed = client
-        .rename_label(created.id, &renamed_name)
+    let id = label.id;
+    label
+        .rename(&renamed_name)
         .await
         .expect("remote label rename should succeed");
     drop(client);
-    assert_eq!(created.name, name);
-    assert_eq!(renamed.id, created.id);
-    assert_eq!(renamed.name, renamed_name);
+    assert_eq!(label.id, id);
+    assert_eq!(label.name, renamed_name);
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]

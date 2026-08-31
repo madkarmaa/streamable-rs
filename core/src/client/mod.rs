@@ -998,58 +998,6 @@ impl<T: HttpTransport> StreamableClient<Authenticated, T> {
         Ok(self.bind_label(data))
     }
 
-    /// Deletes an account label.
-    ///
-    /// ```no_run
-    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
-    /// client.delete_label(42).await?;
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the session is invalid, the label does not exist, or the request
-    /// fails.
-    pub async fn delete_label(&self, id: u64) -> Result<()> {
-        self.execute(&models::DeleteLabelRequest::new(id)).await
-    }
-
-    /// Renames an account label. Spaces around the name are removed.
-    ///
-    /// ```no_run
-    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
-    /// let label = client.rename_label(42, "done").await?;
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the session is invalid, the label does not exist, the name is
-    /// rejected, or the request fails.
-    pub async fn rename_label(&self, id: u64, new_name: &str) -> Result<Label<T>> {
-        let data = self
-            .execute(&models::RenameLabelRequest::new(id, new_name))
-            .await?;
-        Ok(self.bind_label(data))
-    }
-
-    /// Replaces a video's labels in the given order. An empty slice removes all labels.
-    ///
-    /// ```no_run
-    /// # async fn run(client: streamable::AuthenticatedStreamableClient) -> streamable::Result<()> {
-    /// client.set_video_labels("abc123", &[3, 1]).await?;
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the session is invalid, Streamable rejects the assignment, or the
-    /// request fails.
-    pub async fn set_video_labels(&self, shortcode: &str, label_ids: &[u64]) -> Result<()> {
-        self.execute(&models::SetVideoLabelsRequest::new(shortcode, label_ids))
-            .await
-    }
-
     /// Returns a new signed-out client and invalidates resources created before logout.
     ///
     /// ```no_run
