@@ -533,8 +533,9 @@ async fn caller_supplied_transport_receives_runtime_neutral_request() {
     let requests = Arc::clone(&transport.requests);
     let client = StreamableClient::with_transport(transport);
 
-    client
-        .delete_video("custom")
+    let resource = ResourceCore::new(Arc::clone(&client.core));
+    resource
+        .execute(&models::DeleteVideoRequest::new("custom"))
         .await
         .expect("custom transport response should decode");
 
@@ -968,8 +969,9 @@ async fn unauthenticated_delete_video_sends_bodyless_request_and_accepts_only_li
 
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    client
-        .delete_video("abc123")
+    let video = bound_mock_video(&client, "abc123");
+    video
+        .delete()
         .await
         .expect("literal true should confirm video deletion");
 
@@ -1007,8 +1009,9 @@ async fn delete_video_rejects_non_literal_success_bodies() {
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
     for (shortcode, _, expected_body) in responses {
-        let error = client
-            .delete_video(shortcode)
+        let video = bound_mock_video(&client, shortcode);
+        let error = video
+            .delete()
             .await
             .expect_err("non-literal success response should fail");
         assert!(matches!(
@@ -1053,8 +1056,11 @@ async fn delete_video_preserves_common_and_http_errors() {
 
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let session_error = client
-        .delete_video("expired")
+    let expired = bound_mock_video(&client, "expired");
+    let missing = bound_mock_video(&client, "missing");
+    let rate_limited = bound_mock_video(&client, "rate-limited");
+    let session_error = expired
+        .delete()
         .await
         .expect_err("expired session should fail");
     assert!(matches!(
@@ -1062,8 +1068,8 @@ async fn delete_video_preserves_common_and_http_errors() {
         StreamableError::InvalidSession { ref message } if message == "Session expired"
     ));
 
-    let status_error = client
-        .delete_video("missing")
+    let status_error = missing
+        .delete()
         .await
         .expect_err("ordinary HTTP error should fail");
     assert!(matches!(
@@ -1071,8 +1077,8 @@ async fn delete_video_preserves_common_and_http_errors() {
         StreamableError::HttpStatus { status: 404, .. }
     ));
 
-    let rate_limit_error = client
-        .delete_video("rate-limited")
+    let rate_limit_error = rate_limited
+        .delete()
         .await
         .expect_err("rate-limited deletion should fail");
     assert!(matches!(
@@ -1095,8 +1101,9 @@ async fn delete_video_propagates_transport_errors() {
         Url::parse(&format!("http://{address}")).expect("unused local address should form a URL");
     let client = StreamableClient::with_base_url(base_url).expect("mock client should initialize");
 
-    let error = client
-        .delete_video("transport")
+    let video = bound_mock_video(&client, "transport");
+    let error = video
+        .delete()
         .await
         .expect_err("transport failure should propagate");
 
@@ -1113,8 +1120,8 @@ async fn remote_unauthenticated_video_deletion_is_observable() {
         .await
         .expect("remote video upload should reach transcoding");
 
-    client
-        .delete_video(&video.shortcode)
+    video
+        .delete()
         .await
         .expect("remote video deletion should succeed");
     let deleted = client
@@ -3073,14 +3080,12 @@ async fn unauthenticated_video_analytics_requests_are_bodyless() {
         .await;
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let summary = client
-        .get_video_analytics("abc123")
+    let video = bound_mock_video(&client, "abc123");
+    let summary = video
+        .analytics()
         .await
         .expect("video analytics should succeed");
-    let live = client
-        .get_video_live_views("abc123")
-        .await
-        .expect("live views should succeed");
+    let live = video.live_views().await.expect("live views should succeed");
 
     assert_eq!(summary.group, "day");
     assert_eq!(summary.plays[0].count, 0);
@@ -3115,16 +3120,18 @@ async fn video_analytics_requests_map_endpoint_and_common_errors() {
         .await;
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
+    let rejected = bound_mock_video(&client, "rejected");
+    let expired = bound_mock_video(&client, "expired");
     let summary_error = expect_streamable_error(
-        client.get_video_analytics("rejected").await,
+        rejected.analytics().await,
         "rejected video analytics should fail",
     );
     let live_error = expect_streamable_error(
-        client.get_video_live_views("rejected").await,
+        rejected.live_views().await,
         "rejected live views should fail",
     );
     let session_error = expect_streamable_error(
-        client.get_video_analytics("expired").await,
+        expired.analytics().await,
         "expired video analytics should fail",
     );
 
@@ -3162,8 +3169,8 @@ async fn remote_video_live_views_can_be_fetched() {
         .await
         .expect("remote video upload should reach transcoding");
 
-    client
-        .get_video_live_views(&video.shortcode)
+    video
+        .live_views()
         .await
         .expect("remote live views should be available");
     drop(client);
@@ -3200,14 +3207,12 @@ async fn unauthenticated_video_privacy_update_and_explicit_refresh_succeed() {
         ..models::VideoPrivacySettingsUpdate::default()
     };
 
-    client
-        .update_video_privacy("abc123", &update)
+    let mut video = bound_mock_video(&client, "abc123");
+    video
+        .update_privacy(&update)
         .await
         .expect("video privacy update should succeed");
-    let video = client
-        .get_video("abc123")
-        .await
-        .expect("video refresh should succeed");
+    video.refresh().await.expect("video refresh should succeed");
     let settings = video
         .privacy_settings
         .as_ref()
@@ -3242,8 +3247,9 @@ async fn update_video_privacy_serializes_password_removal_as_null() {
         ..models::VideoPrivacySettingsUpdate::default()
     };
 
-    client
-        .update_video_privacy("abc123", &update)
+    let video = bound_mock_video(client.client(), "abc123");
+    video
+        .update_privacy(&update)
         .await
         .expect("password removal should succeed");
 }
@@ -3265,8 +3271,9 @@ async fn reset_video_privacy_sends_bodyless_delete() {
 
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    client
-        .reset_video_privacy("abc123")
+    let video = bound_mock_video(&client, "abc123");
+    video
+        .reset_privacy()
         .await
         .expect("video privacy reset should succeed");
 
@@ -3322,16 +3329,18 @@ async fn video_privacy_operations_map_endpoint_and_common_errors() {
         ..models::VideoPrivacySettingsUpdate::default()
     };
 
+    let rejected = bound_mock_video(client.client(), "rejected");
+    let expired = bound_mock_video(client.client(), "expired");
     let update_error = expect_streamable_error(
-        client.update_video_privacy("rejected", &update).await,
+        rejected.update_privacy(&update).await,
         "rejected privacy update should fail",
     );
     let reset_error = expect_streamable_error(
-        client.reset_video_privacy("rejected").await,
+        rejected.reset_privacy().await,
         "rejected privacy reset should fail",
     );
     let session_error = expect_streamable_error(
-        client.update_video_privacy("expired", &update).await,
+        expired.update_privacy(&update).await,
         "expired privacy update should fail",
     );
 
@@ -3364,7 +3373,7 @@ async fn remote_video_privacy_can_be_updated_and_refreshed() {
     let client = remote_authenticated_client()
         .await
         .expect("shared remote account should authenticate");
-    let video = client
+    let mut video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
@@ -3372,13 +3381,13 @@ async fn remote_video_privacy_can_be_updated_and_refreshed() {
         visibility: Some(models::Visibility::Private),
         ..models::VideoPrivacySettingsUpdate::default()
     };
-    let updated_result = client.update_video_privacy(&video.shortcode, &update).await;
-    let refreshed_result = client.get_video(&video.shortcode).await;
+    let updated_result = video.update_privacy(&update).await;
+    let refreshed_result = video.refresh().await;
     drop(client);
     updated_result.expect("remote video privacy update should succeed");
-    let refreshed = refreshed_result.expect("remote updated video refresh should succeed");
+    refreshed_result.expect("remote updated video refresh should succeed");
     assert_eq!(
-        refreshed
+        video
             .privacy_settings
             .as_ref()
             .expect("remote video should include updated privacy settings")

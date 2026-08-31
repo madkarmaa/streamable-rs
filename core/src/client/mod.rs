@@ -1148,85 +1148,6 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         ))
     }
 
-    /// Gets a video's analytics summary. Works without signing in.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// let analytics = client.get_video_analytics("abc123").await?;
-    /// println!("{} date groups", analytics.plays.len());
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when Streamable rejects the request or the response cannot be decoded.
-    pub async fn get_video_analytics(
-        &self,
-        shortcode: &str,
-    ) -> Result<models::VideoAnalyticsSummary> {
-        self.execute(&models::GetVideoAnalyticsRequest::new(shortcode))
-            .await
-    }
-
-    /// Gets a video's current live view count. Works without signing in.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// println!("{}", client.get_video_live_views("abc123").await?.count);
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when Streamable rejects the request or the response cannot be decoded.
-    pub async fn get_video_live_views(&self, shortcode: &str) -> Result<models::VideoLiveViews> {
-        self.execute(&models::GetVideoLiveViewsRequest::new(shortcode))
-            .await
-    }
-
-    /// Changes the given video privacy fields. Works without signing in.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// use streamable::{models::VideoPrivacySettingsUpdate, StreamableClient};
-    /// let client = StreamableClient::new()?;
-    /// client.update_video_privacy("abc123", &VideoPrivacySettingsUpdate {
-    ///     allow_download: Some(false), ..Default::default()
-    /// }).await?;
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when Streamable rejects the update or the request fails.
-    pub async fn update_video_privacy(
-        &self,
-        shortcode: &str,
-        settings: &models::VideoPrivacySettingsUpdate,
-    ) -> Result<()> {
-        self.execute(&models::UpdateVideoPrivacyRequest::new(shortcode, settings))
-            .await
-    }
-
-    /// Restores a video's default privacy settings. Works without signing in.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// client.reset_video_privacy("abc123").await?;
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when Streamable rejects the reset or the request fails.
-    pub async fn reset_video_privacy(&self, shortcode: &str) -> Result<()> {
-        self.execute(&models::ResetVideoPrivacyRequest::new(shortcode))
-            .await
-    }
-
     /// Gets a video. Works without signing in.
     ///
     /// ```no_run
@@ -1245,24 +1166,6 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
             .execute(&models::GetVideoRequest::new(shortcode))
             .await?;
         Ok(Video::new(ResourceCore::new(Arc::clone(&self.core)), data))
-    }
-
-    /// Deletes a video. Works without signing in.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// client.delete_video("abc123").await?;
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the request fails, Streamable rejects the deletion, or the successful
-    /// response body is not exactly `true`.
-    pub async fn delete_video(&self, shortcode: &str) -> Result<()> {
-        self.execute(&models::DeleteVideoRequest::new(shortcode))
-            .await
     }
 
     /// Uploads a video. Works without signing in; the file name is the default title.

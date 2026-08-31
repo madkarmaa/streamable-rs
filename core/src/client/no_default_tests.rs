@@ -32,7 +32,8 @@ fn caller_supplied_transport_executes_without_default_features() {
     let requests = Arc::clone(&transport.requests);
     let client = StreamableClient::with_transport(transport);
 
-    tokio_test::block_on(client.delete_video("custom"))
+    let resource = ResourceCore::new(Arc::clone(&client.core));
+    tokio_test::block_on(resource.execute(&models::DeleteVideoRequest::new("custom")))
         .expect("custom transport response should decode");
 
     let requests = lock_unpoisoned(&requests);
