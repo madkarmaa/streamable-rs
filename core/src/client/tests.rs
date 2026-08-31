@@ -1379,25 +1379,22 @@ async fn remote_video_upload_cancellation_is_accepted() {
         .await
         .expect("shared remote account should authenticate");
     let video_path = media_path("webm.webm");
-    let size = std::fs::metadata(&video_path)
-        .expect("video fixture should exist")
-        .len();
-    let upload_info = client
-        .execute(&models::ShortcodeRequest::new(size))
+    let upload = client
+        .begin_video_upload(video_path, None)
         .await
-        .expect("remote shortcode request should succeed");
+        .expect("remote upload allocation should succeed");
     client
         .execute(&models::InitializeVideoUploadRequest::new(
-            &upload_info.shortcode,
-            size,
-            "webm.webm".to_string(),
-            "webm".to_string(),
+            &upload.upload_info.shortcode,
+            upload.size,
+            upload.original_name.clone(),
+            upload.title.clone(),
         ))
         .await
         .expect("remote initialization should succeed");
 
-    client
-        .cancel_video_upload(&upload_info.shortcode)
+    upload
+        .cancel()
         .await
         .expect("remote cancellation should succeed");
     drop(client);

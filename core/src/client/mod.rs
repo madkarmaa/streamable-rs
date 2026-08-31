@@ -1266,22 +1266,6 @@ impl<State: Sync, T: HttpTransport> StreamableClient<State, T> {
         })
     }
 
-    /// Cancels an upload by its shortcode. Works without signing in.
-    ///
-    /// ```no_run
-    /// # async fn run() -> streamable::Result<()> {
-    /// let client = streamable::StreamableClient::new()?;
-    /// client.cancel_video_upload("abc123").await?;
-    /// # Ok(()) }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the cancellation request fails or Streamable rejects it.
-    pub async fn cancel_video_upload(&self, shortcode: &str) -> Result<()> {
-        cancel_video_upload(&self.core, shortcode).await
-    }
-
     async fn generate_shortcode(&self, size: u64) -> Result<models::UploadInfo> {
         self.execute(&models::ShortcodeRequest::new(size)).await
     }
