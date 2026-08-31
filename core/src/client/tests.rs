@@ -364,6 +364,24 @@ fn bound_mock_label<T>(client: &AuthenticatedStreamableClient<T>, id: u64, name:
     })
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_collection<State, T>(
+    client: &StreamableClient<State, T>,
+    shortcode: &str,
+) -> Collection<State, T> {
+    let data = serde_json::from_value(json!({
+        "shortcode": shortcode,
+        "title": null,
+        "videos": []
+    }))
+    .expect("mock collection should match the wire model");
+    Collection::new(
+        ResourceCore::new(Arc::clone(&client.core)),
+        shortcode.to_string(),
+        data,
+    )
+}
+
 #[allow(clippy::panic)]
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
     match result {
@@ -2516,16 +2534,16 @@ async fn anonymous_collection_lifecycle_uses_exact_wire_contracts() {
         .get_collection("shared1")
         .await
         .expect("collection details should succeed");
-    let titled = client
-        .update_collection_title("shared1", "Highlights")
+    let titled = created
+        .set_title("Highlights")
         .await
         .expect("collection title update should succeed");
-    let reordered = client
-        .replace_collection_videos("shared1", &reversed)
+    let reordered = titled
+        .replace_videos(&reversed)
         .await
         .expect("collection membership replacement should succeed");
-    client
-        .delete_collection("shared1")
+    reordered
+        .delete()
         .await
         .expect("collection deletion should accept an empty HTTP 200 body");
 
@@ -2696,20 +2714,22 @@ async fn collection_operations_map_endpoint_and_common_errors() {
         client.get_collection("rejected").await,
         "rejected collection fetch should fail",
     );
+    let missing_collection = bound_mock_collection(client.client(), "missing");
+    let rejected_collection = bound_mock_collection(client.client(), "rejected");
     let missing_update = expect_streamable_error(
-        client.update_collection_title("missing", "Title").await,
+        missing_collection.set_title("Title").await,
         "missing collection update should fail",
     );
     let rejected_update = expect_streamable_error(
-        client.replace_collection_videos("rejected", &[]).await,
+        rejected_collection.replace_videos(&[]).await,
         "rejected collection update should fail",
     );
     let missing_delete = expect_streamable_error(
-        client.delete_collection("missing").await,
+        missing_collection.delete().await,
         "missing collection deletion should fail",
     );
     let rejected_delete = expect_streamable_error(
-        client.delete_collection("rejected").await,
+        rejected_collection.delete().await,
         "rejected collection deletion should fail",
     );
 
@@ -2831,8 +2851,8 @@ async fn remote_anonymous_collection_lifecycle() {
             return Err("anonymous collection list omitted the created collection".to_string());
         }
 
-        let titled = client
-            .update_collection_title(&created.shortcode, &title)
+        let titled = created
+            .set_title(&title)
             .await
             .map_err(|error| format!("anonymous collection title update failed: {error}"))?;
         if titled.title.as_deref() != Some(title.as_str()) {
@@ -2840,8 +2860,8 @@ async fn remote_anonymous_collection_lifecycle() {
         }
 
         let reversed = video_shortcodes.iter().rev().cloned().collect::<Vec<_>>();
-        let reordered = client
-            .replace_collection_videos(&created.shortcode, &reversed)
+        let reordered = titled
+            .replace_videos(&reversed)
             .await
             .map_err(|error| format!("anonymous collection reorder failed: {error}"))?;
         if reordered
@@ -2853,8 +2873,8 @@ async fn remote_anonymous_collection_lifecycle() {
             return Err("anonymous collection update changed requested video order".to_string());
         }
 
-        client
-            .delete_collection(&created.shortcode)
+        reordered
+            .delete()
             .await
             .map_err(|error| format!("anonymous collection deletion failed: {error}"))?;
 
@@ -2952,8 +2972,8 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             return Err("remote collection details changed ownership or video order".to_string());
         }
 
-        let titled = client
-            .update_collection_title(&created.shortcode, &title)
+        let titled = created
+            .set_title(&title)
             .await
             .map_err(|error| format!("remote collection title update failed: {error}"))?;
         if titled.title.as_deref() != Some(title.as_str()) {
@@ -2961,8 +2981,8 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
         }
 
         let reversed = video_shortcodes.iter().rev().cloned().collect::<Vec<_>>();
-        let reordered = client
-            .replace_collection_videos(&created.shortcode, &reversed)
+        let reordered = titled
+            .replace_videos(&reversed)
             .await
             .map_err(|error| format!("remote collection reorder failed: {error}"))?;
         if reordered
@@ -2974,8 +2994,8 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             return Err("remote collection update changed requested video order".to_string());
         }
 
-        client
-            .delete_collection(&created.shortcode)
+        reordered
+            .delete()
             .await
             .map_err(|error| format!("remote collection deletion failed: {error}"))?;
         let count_after_delete = client
