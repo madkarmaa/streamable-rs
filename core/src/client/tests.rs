@@ -2020,7 +2020,7 @@ async fn rename_label_reports_missing_id() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn set_video_labels_posts_ordered_absolute_replacement() {
+async fn video_set_labels_posts_ordered_replacement_and_updates_snapshot() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
     let password = "Password1";
@@ -2040,16 +2040,24 @@ async fn set_video_labels_posts_ordered_absolute_replacement() {
         .await
         .expect("registration should succeed");
 
-    let video = bound_mock_labeled_video(client.client(), "abc123", &[]);
+    let mut video = bound_mock_labeled_video(client.client(), "abc123", &[]);
     video
         .set_labels(&[42, 7, 18])
         .await
         .expect("video label replacement should succeed");
+    assert_eq!(
+        video
+            .labels
+            .iter()
+            .map(|label| label.id)
+            .collect::<Vec<_>>(),
+        [42, 7, 18]
+    );
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn set_video_labels_posts_empty_replacement() {
+async fn video_set_labels_posts_empty_replacement_and_updates_snapshot() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
     let password = "Password1";
@@ -2069,11 +2077,12 @@ async fn set_video_labels_posts_empty_replacement() {
         .await
         .expect("registration should succeed");
 
-    let video = bound_mock_labeled_video(client.client(), "abc123", &[42]);
+    let mut video = bound_mock_labeled_video(client.client(), "abc123", &[42]);
     video
         .set_labels(&[])
         .await
         .expect("empty video label replacement should succeed");
+    assert!(video.labels.is_empty());
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -2228,7 +2237,7 @@ async fn video_remove_labels_with_empty_ids_makes_no_requests() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn set_video_labels_maps_assignment_and_common_errors() {
+async fn video_set_labels_maps_assignment_and_common_errors() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
     let password = "Password1";
@@ -2258,9 +2267,9 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
         .await
         .expect("registration should succeed");
 
-    let rejected_video = bound_mock_labeled_video(client.client(), "rejected", &[]);
-    let expired_video = bound_mock_labeled_video(client.client(), "expired", &[]);
-    let rate_limited_video = bound_mock_labeled_video(client.client(), "rate-limited", &[]);
+    let mut rejected_video = bound_mock_labeled_video(client.client(), "rejected", &[]);
+    let mut expired_video = bound_mock_labeled_video(client.client(), "expired", &[]);
+    let mut rate_limited_video = bound_mock_labeled_video(client.client(), "rate-limited", &[]);
     let rejected = expect_streamable_error(
         rejected_video.set_labels(&[7]).await,
         "rejected video label replacement should fail",
@@ -2286,6 +2295,9 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
         rate_limited,
         StreamableError::RateLimitExceeded { .. }
     ));
+    assert!(rejected_video.labels.is_empty());
+    assert!(expired_video.labels.is_empty());
+    assert!(rate_limited_video.labels.is_empty());
 }
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]

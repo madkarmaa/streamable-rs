@@ -40,7 +40,7 @@ use streamable::{Result, StreamableClient};
 let client = StreamableClient::new()?
     .login("me@example.com".into(), "password".into()).await?;
 let label = client.create_label("reviewed").await?;
-let video = client.get_video("abc123").await?;
+let mut video = client.get_video("abc123").await?;
 video.set_labels(&[label.id]).await?;
 # Ok(()) }
 ```

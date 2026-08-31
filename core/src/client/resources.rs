@@ -340,7 +340,7 @@ impl<T: HttpTransport> Video<Authenticated, T> {
     /// Replaces this video's labels in the supplied order.
     ///
     /// ```no_run
-    /// # async fn run(video: &streamable::Video<streamable::Authenticated>) -> streamable::Result<()> {
+    /// # async fn run(video: &mut streamable::Video<streamable::Authenticated>) -> streamable::Result<()> {
     /// video.set_labels(&[3, 1]).await?;
     /// # Ok(()) }
     /// ```
@@ -348,13 +348,19 @@ impl<T: HttpTransport> Video<Authenticated, T> {
     /// # Errors
     ///
     /// Returns an error when Streamable rejects the assignment or the request fails.
-    pub async fn set_labels(&self, label_ids: &[u64]) -> Result<()> {
+    pub async fn set_labels(&mut self, label_ids: &[u64]) -> Result<()> {
         self.core
             .execute(&models::SetVideoLabelsRequest::new(
                 &self.data.shortcode,
                 label_ids,
             ))
-            .await
+            .await?;
+        self.data.labels = label_ids
+            .iter()
+            .copied()
+            .map(|id| models::VideoLabel { id })
+            .collect();
+        Ok(())
     }
 
     /// Removes every label from this video.
