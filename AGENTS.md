@@ -4,6 +4,10 @@
 
 The API is undocumented. Exact wire behavior matters more than assumptions based on endpoint names, REST conventions, or what the service _should_ do. When the implementation, fixtures, and live service disagree, treat that disagreement as useful evidence rather than smoothing it over.
 
+## Addressing the user
+
+Always address the user by the name `Maintainer` in every message.
+
 ## What matters most
 
 ### 1. Preserve observed protocol behavior
