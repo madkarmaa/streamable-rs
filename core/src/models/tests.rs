@@ -4,8 +4,8 @@ use super::{
     CreateUserRequest, DomainRestrictions, InitializeVideoUploadRequest, ListCollectionsRequest,
     PrivacySettingsRequest, RenameLabelRequest, ReplaceCollectionVideosRequest,
     SetVideoLabelsRequest, SetVideoThumbnailFrameRequest, TranscodeVideoRequest,
-    UpdateCollectionTitleRequest, UploadInfo, UploadVideoThumbnailRequest, VideoAnalyticsSummary,
-    VideoPasswordUpdate, VideoPrivacySettingsUpdate, Visibility,
+    UpdateCollectionTitleRequest, UploadInfo, UploadVideoThumbnailRequest, Video,
+    VideoAnalyticsSummary, VideoPasswordUpdate, VideoPrivacySettingsUpdate, Visibility,
 };
 use crate::transport::Body;
 
@@ -49,6 +49,46 @@ fn collection_response_models_deserialize_distinct_wire_shapes() {
     );
     assert!(details.is_owner);
     assert_eq!(details.videos[0].date_added, "2026-08-13T10:00:00Z");
+}
+
+#[test]
+fn video_labels_deserialize_as_id_references_and_default_empty() {
+    let video = |labels: Option<serde_json::Value>| {
+        let mut value = serde_json::json!({
+            "shortcode": "abc123",
+            "status": 2,
+            "percent": 100,
+            "date_added": 1,
+            "url": "https://streamable.com/abc123",
+            "original_name": null,
+            "duration": null,
+            "width": null,
+            "height": null,
+            "thumbnail_url": null,
+            "dynamic_thumbnail_url": null,
+            "thumbnail_offset": null
+        });
+        if let Some(labels) = labels {
+            value["labels"] = labels;
+        }
+        serde_json::from_value::<Video>(value).expect("video snapshot should deserialize")
+    };
+
+    let labeled = video(Some(serde_json::json!([
+        { "id": 42, "name": "reviewed" },
+        { "id": 7 }
+    ])));
+    let unlabeled = video(None);
+
+    assert_eq!(
+        labeled
+            .labels
+            .iter()
+            .map(|label| label.id)
+            .collect::<Vec<_>>(),
+        vec![42, 7]
+    );
+    assert!(unlabeled.labels.is_empty());
 }
 
 #[test]

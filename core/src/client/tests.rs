@@ -330,6 +330,58 @@ fn mock_video(shortcode: &str, is_custom: bool) -> serde_json::Value {
     })
 }
 
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_video<State, T>(
+    client: &StreamableClient<State, T>,
+    shortcode: &str,
+) -> Video<State, T> {
+    let data = serde_json::from_value(mock_video(shortcode, false))
+        .expect("mock video should match the wire model");
+    Video::new(ResourceCore::new(Arc::clone(&client.core)), data)
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_labeled_video<T>(
+    client: &AuthenticatedStreamableClient<T>,
+    shortcode: &str,
+    label_ids: &[u64],
+) -> Video<Authenticated, T> {
+    let mut value = mock_video(shortcode, false);
+    value["labels"] = label_ids
+        .iter()
+        .map(|id| json!({ "id": id }))
+        .collect::<Vec<_>>()
+        .into();
+    let data = serde_json::from_value(value).expect("mock video should match the wire model");
+    Video::new(ResourceCore::new(Arc::clone(&client.core)), data)
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_label<T>(client: &AuthenticatedStreamableClient<T>, id: u64, name: &str) -> Label<T> {
+    client.bind_label(models::Label {
+        id,
+        name: name.to_string(),
+    })
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+fn bound_mock_collection<State, T>(
+    client: &StreamableClient<State, T>,
+    shortcode: &str,
+) -> Collection<State, T> {
+    let data = serde_json::from_value(json!({
+        "shortcode": shortcode,
+        "title": null,
+        "videos": []
+    }))
+    .expect("mock collection should match the wire model");
+    Collection::new(
+        ResourceCore::new(Arc::clone(&client.core)),
+        shortcode.to_string(),
+        data,
+    )
+}
+
 #[allow(clippy::panic)]
 fn expect_streamable_error<T>(result: Result<T>, context: &str) -> StreamableError {
     match result {
@@ -360,6 +412,85 @@ impl HttpTransport for RecordingTransport {
             body: bytes::Bytes::from_static(b"true"),
         }))
     }
+}
+
+#[derive(Clone, Default)]
+struct DelayedCookieTransport {
+    started: Arc<tokio::sync::Notify>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+impl HttpTransport for DelayedCookieTransport {
+    type Error = std::io::Error;
+
+    fn execute(
+        &self,
+        _request: crate::transport::Request,
+    ) -> impl std::future::Future<
+        Output = std::result::Result<crate::transport::Response, Self::Error>,
+    > + Send {
+        let started = Arc::clone(&self.started);
+        let release = Arc::clone(&self.release);
+        async move {
+            started.notify_one();
+            release.notified().await;
+            let mut headers = http::HeaderMap::new();
+            headers.insert(
+                http::header::SET_COOKIE,
+                http::HeaderValue::from_static("session=late-session; Path=/; HttpOnly"),
+            );
+            Ok(crate::transport::Response {
+                status: http::StatusCode::OK,
+                headers,
+                body: bytes::Bytes::new(),
+            })
+        }
+    }
+}
+
+#[tokio::test]
+async fn logout_does_not_accept_cookies_from_an_in_flight_request() {
+    let transport = DelayedCookieTransport::default();
+    let started = Arc::clone(&transport.started);
+    let release = Arc::clone(&transport.release);
+    let core = Arc::new(ClientCore {
+        transport,
+        session: Mutex::new(SessionState::default()),
+        endpoint_routing: EndpointRouting::Production,
+    });
+    let endpoint =
+        Url::parse("https://api.streamable.com/resource").expect("test endpoint should be valid");
+    let request_endpoint = endpoint.clone();
+    let request_core = Arc::clone(&core);
+    let request = tokio::spawn(async move {
+        send_request(
+            &request_core.transport,
+            &request_core.session,
+            None,
+            Method::GET,
+            request_endpoint,
+            HeaderMap::new(),
+            Body::Empty,
+        )
+        .await
+    });
+
+    started.notified().await;
+    core.invalidate_session();
+    release.notify_one();
+    request
+        .await
+        .expect("request task should finish")
+        .expect("transport response should be accepted");
+
+    let session = lock_unpoisoned(&core.session);
+    assert_eq!(session.generation, 1);
+    assert!(
+        cookie_header(&session.cookies, &endpoint)
+            .expect("stored cookies should produce a valid header")
+            .is_none()
+    );
+    drop(session);
 }
 
 #[tracing_test::traced_test]
@@ -402,8 +533,9 @@ async fn caller_supplied_transport_receives_runtime_neutral_request() {
     let requests = Arc::clone(&transport.requests);
     let client = StreamableClient::with_transport(transport);
 
-    client
-        .delete_video("custom")
+    let resource = ResourceCore::new(Arc::clone(&client.core));
+    resource
+        .execute(&models::DeleteVideoRequest::new("custom"))
         .await
         .expect("custom transport response should decode");
 
@@ -714,6 +846,60 @@ async fn allocated_upload_handle_cancels_before_initialization() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
+async fn video_upload_and_handle_are_invalidated_by_logout() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let video_path = media_path("webm.webm");
+    let video_size = std::fs::metadata(&video_path)
+        .expect("video fixture should exist")
+        .len();
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/uploads/shortcode"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_upload_info(video_size)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_upload_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let upload = client
+        .begin_video_upload(video_path, None)
+        .await
+        .expect("upload should allocate a shortcode");
+    let handle = upload.handle();
+    let _client = client.logout();
+
+    let handle_error = handle
+        .cancel()
+        .await
+        .expect_err("logout should invalidate the upload handle");
+    assert!(matches!(handle_error, StreamableError::ResourceInvalidated));
+    let upload_error = upload
+        .complete()
+        .await
+        .expect_err("logout should invalidate the allocated upload");
+    assert!(matches!(upload_error, StreamableError::ResourceInvalidated));
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(
+        requests
+            .iter()
+            .map(|request| (request.method.as_str(), request.url.path()))
+            .collect::<Vec<_>>(),
+        [("POST", "/users"), ("GET", "/api/v1/uploads/shortcode")]
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
 async fn video_upload_rejects_non_video_before_network_access() {
     let mock_server = MockServer::start().await;
     let client = mock_upload_client(&mock_server).expect("mock client should initialize");
@@ -783,8 +969,9 @@ async fn unauthenticated_delete_video_sends_bodyless_request_and_accepts_only_li
 
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    client
-        .delete_video("abc123")
+    let video = bound_mock_video(&client, "abc123");
+    video
+        .delete()
         .await
         .expect("literal true should confirm video deletion");
 
@@ -822,8 +1009,9 @@ async fn delete_video_rejects_non_literal_success_bodies() {
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
     for (shortcode, _, expected_body) in responses {
-        let error = client
-            .delete_video(shortcode)
+        let video = bound_mock_video(&client, shortcode);
+        let error = video
+            .delete()
             .await
             .expect_err("non-literal success response should fail");
         assert!(matches!(
@@ -868,8 +1056,11 @@ async fn delete_video_preserves_common_and_http_errors() {
 
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let session_error = client
-        .delete_video("expired")
+    let expired = bound_mock_video(&client, "expired");
+    let missing = bound_mock_video(&client, "missing");
+    let rate_limited = bound_mock_video(&client, "rate-limited");
+    let session_error = expired
+        .delete()
         .await
         .expect_err("expired session should fail");
     assert!(matches!(
@@ -877,8 +1068,8 @@ async fn delete_video_preserves_common_and_http_errors() {
         StreamableError::InvalidSession { ref message } if message == "Session expired"
     ));
 
-    let status_error = client
-        .delete_video("missing")
+    let status_error = missing
+        .delete()
         .await
         .expect_err("ordinary HTTP error should fail");
     assert!(matches!(
@@ -886,8 +1077,8 @@ async fn delete_video_preserves_common_and_http_errors() {
         StreamableError::HttpStatus { status: 404, .. }
     ));
 
-    let rate_limit_error = client
-        .delete_video("rate-limited")
+    let rate_limit_error = rate_limited
+        .delete()
         .await
         .expect_err("rate-limited deletion should fail");
     assert!(matches!(
@@ -910,8 +1101,9 @@ async fn delete_video_propagates_transport_errors() {
         Url::parse(&format!("http://{address}")).expect("unused local address should form a URL");
     let client = StreamableClient::with_base_url(base_url).expect("mock client should initialize");
 
-    let error = client
-        .delete_video("transport")
+    let video = bound_mock_video(&client, "transport");
+    let error = video
+        .delete()
         .await
         .expect_err("transport failure should propagate");
 
@@ -928,8 +1120,8 @@ async fn remote_unauthenticated_video_deletion_is_observable() {
         .await
         .expect("remote video upload should reach transcoding");
 
-    client
-        .delete_video(&video.shortcode)
+    video
+        .delete()
         .await
         .expect("remote video deletion should succeed");
     let deleted = client
@@ -966,14 +1158,15 @@ async fn set_video_thumbnail_frame_patches_exact_offset_and_decodes_video() {
         .expect(1)
         .mount(&mock_server)
         .await;
-    let (client, _, _) = mock_client(&mock_server)
+    let registration = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
+    let mut video = bound_mock_video(registration.client(), "abc123");
 
-    let video = client
-        .set_video_thumbnail_frame("abc123", 12.5)
+    video
+        .set_thumbnail_frame(12.5)
         .await
         .expect("frame thumbnail update should succeed");
 
@@ -1016,14 +1209,15 @@ async fn upload_video_thumbnail_posts_one_streamed_screenshot_file() {
         .expect(1)
         .mount(&mock_server)
         .await;
-    let (client, _, _) = mock_client(&mock_server)
+    let registration = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
+    let mut video = bound_mock_video(registration.client(), "abc123");
 
-    let video = client
-        .upload_video_thumbnail("abc123", &image_file)
+    video
+        .upload_thumbnail(&image_file)
         .await
         .expect("custom thumbnail upload should succeed");
 
@@ -1039,10 +1233,11 @@ async fn upload_video_thumbnail_posts_one_streamed_screenshot_file() {
 async fn video_thumbnail_inputs_are_validated_before_requests() {
     let mock_server = MockServer::start().await;
     let client = mock_client(&mock_server).expect("mock client should initialize");
+    let mut video = bound_mock_video(&client, "abc123");
 
     for seconds in [-1.0, f64::NAN, f64::INFINITY] {
-        let error = client
-            .set_video_thumbnail_frame("abc123", seconds)
+        let error = video
+            .set_thumbnail_frame(seconds)
             .await
             .expect_err("invalid thumbnail offset should be rejected");
         assert!(matches!(
@@ -1051,8 +1246,8 @@ async fn video_thumbnail_inputs_are_validated_before_requests() {
         ));
     }
 
-    let error = client
-        .upload_video_thumbnail("abc123", media_path("webm.webm"))
+    let error = video
+        .upload_thumbnail(media_path("webm.webm"))
         .await
         .expect_err("video content should be rejected as a thumbnail image");
     assert!(matches!(error, StreamableError::InvalidImageFile { .. }));
@@ -1104,28 +1299,29 @@ async fn video_thumbnail_operations_map_endpoint_and_common_errors() {
         .expect(1)
         .mount(&mock_server)
         .await;
-    let (client, _, _) = mock_client(&mock_server)
+    let registration = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
+    let mut rejected = bound_mock_video(registration.client(), "rejected");
+    let mut expired = bound_mock_video(registration.client(), "expired");
+    let mut rate_limited = bound_mock_video(registration.client(), "rate-limited");
 
     let frame_error = expect_streamable_error(
-        client.set_video_thumbnail_frame("rejected", 100.0).await,
+        rejected.set_thumbnail_frame(100.0).await,
         "rejected frame thumbnail should fail",
     );
     let upload_error = expect_streamable_error(
-        client.upload_video_thumbnail("rejected", &image_file).await,
+        rejected.upload_thumbnail(&image_file).await,
         "rejected custom thumbnail should fail",
     );
     let session_error = expect_streamable_error(
-        client.set_video_thumbnail_frame("expired", 1.0).await,
+        expired.set_thumbnail_frame(1.0).await,
         "expired thumbnail session should fail",
     );
     let rate_limit_error = expect_streamable_error(
-        client
-            .upload_video_thumbnail("rate-limited", &image_file)
-            .await,
+        rate_limited.upload_thumbnail(&image_file).await,
         "rate-limited thumbnail upload should fail",
     );
 
@@ -1183,25 +1379,22 @@ async fn remote_video_upload_cancellation_is_accepted() {
         .await
         .expect("shared remote account should authenticate");
     let video_path = media_path("webm.webm");
-    let size = std::fs::metadata(&video_path)
-        .expect("video fixture should exist")
-        .len();
-    let upload_info = client
-        .execute(&models::ShortcodeRequest::new(size))
+    let upload = client
+        .begin_video_upload(video_path, None)
         .await
-        .expect("remote shortcode request should succeed");
+        .expect("remote upload allocation should succeed");
     client
         .execute(&models::InitializeVideoUploadRequest::new(
-            &upload_info.shortcode,
-            size,
-            "webm.webm".to_string(),
-            "webm".to_string(),
+            &upload.upload_info.shortcode,
+            upload.size,
+            upload.original_name.clone(),
+            upload.title.clone(),
         ))
         .await
         .expect("remote initialization should succeed");
 
-    client
-        .cancel_video_upload(&upload_info.shortcode)
+    upload
+        .cancel()
         .await
         .expect("remote cancellation should succeed");
     drop(client);
@@ -1214,25 +1407,25 @@ async fn remote_video_thumbnail_branches_are_reversible() {
     let client = remote_authenticated_client()
         .await
         .expect("shared remote account should authenticate");
-    let video = client
+    let mut video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
     let image_file = image_path("png.png");
 
-    let custom_result = client
-        .upload_video_thumbnail(&video.shortcode, &image_file)
-        .await;
+    video
+        .upload_thumbnail(&image_file)
+        .await
+        .expect("remote custom thumbnail upload should succeed");
+    assert_eq!(video.thumbnail_offset.as_deref(), Some("-1"));
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    let restore_result = client
-        .set_video_thumbnail_frame(&video.shortcode, 0.5)
-        .await;
+    video
+        .set_thumbnail_frame(0.5)
+        .await
+        .expect("remote frame thumbnail restore should succeed");
     drop(client);
 
-    let custom = custom_result.expect("remote custom thumbnail upload should succeed");
-    assert_eq!(custom.thumbnail_offset.as_deref(), Some("-1"));
-    let restored = restore_result.expect("remote frame thumbnail restore should succeed");
-    assert_ne!(restored.thumbnail_offset.as_deref(), Some("-1"));
+    assert_ne!(video.thumbnail_offset.as_deref(), Some("-1"));
 }
 
 #[test]
@@ -1242,8 +1435,8 @@ fn configured_base_url_is_stored() {
         StreamableClient::with_base_url(base_url.clone()).expect("client should initialize");
 
     assert!(matches!(
-        client.endpoint_routing,
-        EndpointRouting::Override(url) if url == base_url
+        client.core.endpoint_routing,
+        EndpointRouting::Override(ref url) if url == &base_url
     ));
 }
 
@@ -1309,7 +1502,7 @@ async fn authenticated_client_refreshes_full_user_data() {
         .mount(&mock_server)
         .await;
 
-    let (mut client, _, _) = mock_client(&mock_server)
+    let mut client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
@@ -1371,14 +1564,16 @@ async fn test_successful_random_registration() {
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let (client, email, password) = client
+    let registration = client
         .register(None, None, None)
         .await
         .expect("registration should succeed");
+    let email = registration.email().to_owned();
+    let password = registration.password().to_owned();
 
     assert!(!email.is_empty());
     assert!(!password.is_empty());
-    assert!(client.is_authenticated());
+    assert!(registration.is_authenticated());
 
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     {
@@ -1418,17 +1613,19 @@ async fn test_successful_registration_and_login() {
     #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
     let registration_client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let (registered_client, returned_email, returned_password) = registration_client
+    let registration = registration_client
         .register(Some(email.clone()), Some(password.clone()), None)
         .await
         .expect("registration should succeed");
+    let returned_email = registration.email().to_owned();
+    let returned_password = registration.password().to_owned();
 
     assert_eq!(returned_email, email);
     assert_eq!(returned_password, password);
-    assert_eq!(registered_client.user().email, email);
-    assert!(registered_client.is_authenticated());
+    assert_eq!(registration.user().email, email);
+    assert!(registration.is_authenticated());
 
-    let login_client = registered_client.logout();
+    let login_client = registration.logout();
 
     assert!(!login_client.is_authenticated());
 
@@ -1558,7 +1755,7 @@ async fn mocked_change_password_flow() {
     )
     .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(
             Some(email.to_string()),
@@ -1624,7 +1821,7 @@ async fn create_label_posts_trimmed_name_and_returns_label() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
@@ -1636,8 +1833,8 @@ async fn create_label_posts_trimmed_name_and_returns_label() {
         .expect("label creation should succeed");
 
     assert_eq!(
-        label,
-        models::Label {
+        label.data(),
+        &models::Label {
             name: "important".to_string(),
             id: 174_172
         }
@@ -1659,7 +1856,7 @@ async fn create_label_reports_duplicate_name() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
@@ -1691,16 +1888,14 @@ async fn delete_label_sends_bodyless_request() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
 
-    client
-        .delete_label(174_172)
-        .await
-        .expect("label deletion should succeed");
+    let label = bound_mock_label(client.client(), 174_172, "temporary");
+    label.delete().await.expect("label deletion should succeed");
 
     let requests = mock_server
         .received_requests()
@@ -1731,16 +1926,14 @@ async fn delete_label_reports_missing_id() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
 
-    let error = expect_streamable_error(
-        client.delete_label(696_969).await,
-        "missing label deletion should fail",
-    );
+    let label = bound_mock_label(client.client(), 696_969, "missing");
+    let error = expect_streamable_error(label.delete().await, "missing label deletion should fail");
 
     assert!(matches!(
         error,
@@ -1767,20 +1960,21 @@ async fn rename_label_patches_trimmed_name_and_returns_label() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
 
-    let label = client
-        .rename_label(174_172, "  renamed  ")
+    let mut label = bound_mock_label(client.client(), 174_172, "original");
+    label
+        .rename("  renamed  ")
         .await
         .expect("label rename should succeed");
 
     assert_eq!(
-        label,
-        models::Label {
+        label.data(),
+        &models::Label {
             id: 174_172,
             name: "renamed".to_string()
         }
@@ -1806,14 +2000,15 @@ async fn rename_label_reports_missing_id() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
 
+    let mut label = bound_mock_label(client.client(), 696_969, "missing");
     let error = expect_streamable_error(
-        client.rename_label(696_969, "renamed").await,
+        label.rename("renamed").await,
         "missing label rename should fail",
     );
 
@@ -1825,7 +2020,7 @@ async fn rename_label_reports_missing_id() {
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn set_video_labels_posts_ordered_absolute_replacement() {
+async fn video_set_labels_posts_ordered_replacement_and_updates_snapshot() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
     let password = "Password1";
@@ -1839,21 +2034,30 @@ async fn set_video_labels_posts_ordered_absolute_replacement() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
 
-    client
-        .set_video_labels("abc123", &[42, 7, 18])
+    let mut video = bound_mock_labeled_video(client.client(), "abc123", &[]);
+    video
+        .set_labels(&[42, 7, 18])
         .await
         .expect("video label replacement should succeed");
+    assert_eq!(
+        video
+            .labels
+            .iter()
+            .map(|label| label.id)
+            .collect::<Vec<_>>(),
+        [42, 7, 18]
+    );
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn set_video_labels_posts_empty_replacement() {
+async fn video_set_labels_posts_empty_replacement_and_updates_snapshot() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
     let password = "Password1";
@@ -1867,21 +2071,173 @@ async fn set_video_labels_posts_empty_replacement() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
 
-    client
-        .set_video_labels("abc123", &[])
+    let mut video = bound_mock_labeled_video(client.client(), "abc123", &[42]);
+    video
+        .set_labels(&[])
         .await
         .expect("empty video label replacement should succeed");
+    assert!(video.labels.is_empty());
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
 #[tokio::test]
-async fn set_video_labels_maps_assignment_and_common_errors() {
+async fn video_clear_labels_posts_empty_replacement_and_updates_snapshot() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "labels": [] })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[42, 7]);
+
+    video
+        .clear_labels()
+        .await
+        .expect("video label clearing should succeed");
+
+    assert!(video.labels.is_empty());
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_remove_labels_refreshes_filters_and_updates_snapshot() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    let mut refreshed = mock_video("abc123", false);
+    refreshed["labels"] = json!([{ "id": 42 }, { "id": 7 }, { "id": 18 }]);
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(refreshed))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "labels": [42, 18] })))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[1]);
+
+    video
+        .remove_labels(&[7, 999])
+        .await
+        .expect("selected video labels should be removed");
+
+    let remaining_ids = video
+        .labels
+        .iter()
+        .map(|label| label.id)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_ids, [42, 18]);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_remove_labels_skips_replacement_when_ids_are_absent() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    let mut refreshed = mock_video("abc123", false);
+    refreshed["labels"] = json!([{ "id": 42 }, { "id": 7 }]);
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(refreshed))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[1]);
+
+    video
+        .remove_labels(&[999])
+        .await
+        .expect("absent video label ids should be ignored");
+
+    let remaining_ids = video
+        .labels
+        .iter()
+        .map(|label| label.id)
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_ids, [42, 7]);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_remove_labels_with_empty_ids_makes_no_requests() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/videos/abc123/labels"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+    let registration = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(registration.client(), "abc123", &[42]);
+
+    video
+        .remove_labels(&[])
+        .await
+        .expect("empty video label removal should be a no-op");
+
+    assert_eq!(video.labels[0].id, 42);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_set_labels_maps_assignment_and_common_errors() {
     let mock_server = MockServer::start().await;
     let email = "user@example.com";
     let password = "Password1";
@@ -1905,22 +2261,25 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
         .expect("registration should succeed");
 
+    let mut rejected_video = bound_mock_labeled_video(client.client(), "rejected", &[]);
+    let mut expired_video = bound_mock_labeled_video(client.client(), "expired", &[]);
+    let mut rate_limited_video = bound_mock_labeled_video(client.client(), "rate-limited", &[]);
     let rejected = expect_streamable_error(
-        client.set_video_labels("rejected", &[7]).await,
+        rejected_video.set_labels(&[7]).await,
         "rejected video label replacement should fail",
     );
     let expired = expect_streamable_error(
-        client.set_video_labels("expired", &[7]).await,
+        expired_video.set_labels(&[7]).await,
         "expired video label replacement should fail",
     );
     let rate_limited = expect_streamable_error(
-        client.set_video_labels("rate-limited", &[7]).await,
+        rate_limited_video.set_labels(&[7]).await,
         "rate-limited video label replacement should fail",
     );
 
@@ -1936,16 +2295,19 @@ async fn set_video_labels_maps_assignment_and_common_errors() {
         rate_limited,
         StreamableError::RateLimitExceeded { .. }
     ));
+    assert!(rejected_video.labels.is_empty());
+    assert!(expired_video.labels.is_empty());
+    assert!(rate_limited_video.labels.is_empty());
 }
 
 #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
 #[tokio::test]
-async fn remote_video_labels_can_be_assigned() {
+async fn remote_video_label_resources_can_be_assigned_and_cleared() {
     let _remote_test_guard = REMOTE_TEST_LOCK.lock().await;
     let client = remote_authenticated_client()
         .await
         .expect("shared remote account should authenticate");
-    let video = client
+    let mut video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
@@ -1955,10 +2317,20 @@ async fn remote_video_labels_can_be_assigned() {
         .await
         .expect("remote label creation should succeed");
 
-    client
-        .set_video_labels(&video.shortcode, &[label.id])
+    video
+        .set_labels(&[label.id])
         .await
         .expect("remote video label assignment should succeed");
+    video
+        .remove_labels(&[label.id, u64::MAX])
+        .await
+        .expect("remote selected video label removal should succeed");
+    assert!(video.labels.is_empty());
+    video
+        .clear_labels()
+        .await
+        .expect("remote video label clearing should succeed");
+    assert!(video.labels.is_empty());
     drop(client);
 }
 
@@ -1972,18 +2344,18 @@ async fn remote_label_lifecycle() {
     let name = format!("label-{}", generate_random_password());
     let renamed_name = format!("{name}-renamed");
 
-    let created = client
+    let mut label = client
         .create_label(&name)
         .await
         .expect("remote label creation should succeed");
-    let renamed = client
-        .rename_label(created.id, &renamed_name)
+    let id = label.id;
+    label
+        .rename(&renamed_name)
         .await
         .expect("remote label rename should succeed");
     drop(client);
-    assert_eq!(created.name, name);
-    assert_eq!(renamed.id, created.id);
-    assert_eq!(renamed.name, renamed_name);
+    assert_eq!(label.id, id);
+    assert_eq!(label.name, renamed_name);
 }
 
 #[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
@@ -2178,16 +2550,16 @@ async fn anonymous_collection_lifecycle_uses_exact_wire_contracts() {
         .get_collection("shared1")
         .await
         .expect("collection details should succeed");
-    let titled = client
-        .update_collection_title("shared1", "Highlights")
+    let titled = created
+        .set_title("Highlights")
         .await
         .expect("collection title update should succeed");
-    let reordered = client
-        .replace_collection_videos("shared1", &reversed)
+    let reordered = titled
+        .replace_videos(&reversed)
         .await
         .expect("collection membership replacement should succeed");
-    client
-        .delete_collection("shared1")
+    reordered
+        .delete()
         .await
         .expect("collection deletion should accept an empty HTTP 200 body");
 
@@ -2327,7 +2699,7 @@ async fn collection_operations_map_endpoint_and_common_errors() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
@@ -2358,20 +2730,22 @@ async fn collection_operations_map_endpoint_and_common_errors() {
         client.get_collection("rejected").await,
         "rejected collection fetch should fail",
     );
+    let missing_collection = bound_mock_collection(client.client(), "missing");
+    let rejected_collection = bound_mock_collection(client.client(), "rejected");
     let missing_update = expect_streamable_error(
-        client.update_collection_title("missing", "Title").await,
+        missing_collection.set_title("Title").await,
         "missing collection update should fail",
     );
     let rejected_update = expect_streamable_error(
-        client.replace_collection_videos("rejected", &[]).await,
+        rejected_collection.replace_videos(&[]).await,
         "rejected collection update should fail",
     );
     let missing_delete = expect_streamable_error(
-        client.delete_collection("missing").await,
+        missing_collection.delete().await,
         "missing collection deletion should fail",
     );
     let rejected_delete = expect_streamable_error(
-        client.delete_collection("rejected").await,
+        rejected_collection.delete().await,
         "rejected collection deletion should fail",
     );
 
@@ -2460,12 +2834,12 @@ async fn remote_anonymous_collection_lifecycle() {
             .upload_video(media_path("webm.webm"), Some(format!("{title}-first")))
             .await
             .map_err(|error| format!("first anonymous video upload failed: {error}"))?;
-        video_shortcodes.push(first.shortcode);
+        video_shortcodes.push(first.shortcode.clone());
         let second = client
             .upload_video(media_path("webm.webm"), Some(format!("{title}-second")))
             .await
             .map_err(|error| format!("second anonymous video upload failed: {error}"))?;
-        video_shortcodes.push(second.shortcode);
+        video_shortcodes.push(second.shortcode.clone());
 
         let created = client
             .create_collection(&video_shortcodes, None)
@@ -2493,8 +2867,8 @@ async fn remote_anonymous_collection_lifecycle() {
             return Err("anonymous collection list omitted the created collection".to_string());
         }
 
-        let titled = client
-            .update_collection_title(&created.shortcode, &title)
+        let titled = created
+            .set_title(&title)
             .await
             .map_err(|error| format!("anonymous collection title update failed: {error}"))?;
         if titled.title.as_deref() != Some(title.as_str()) {
@@ -2502,8 +2876,8 @@ async fn remote_anonymous_collection_lifecycle() {
         }
 
         let reversed = video_shortcodes.iter().rev().cloned().collect::<Vec<_>>();
-        let reordered = client
-            .replace_collection_videos(&created.shortcode, &reversed)
+        let reordered = titled
+            .replace_videos(&reversed)
             .await
             .map_err(|error| format!("anonymous collection reorder failed: {error}"))?;
         if reordered
@@ -2515,8 +2889,8 @@ async fn remote_anonymous_collection_lifecycle() {
             return Err("anonymous collection update changed requested video order".to_string());
         }
 
-        client
-            .delete_collection(&created.shortcode)
+        reordered
+            .delete()
             .await
             .map_err(|error| format!("anonymous collection deletion failed: {error}"))?;
 
@@ -2567,12 +2941,12 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             .upload_video(media_path("webm.webm"), Some(format!("{title}-first")))
             .await
             .map_err(|error| format!("first remote video upload failed: {error}"))?;
-        video_shortcodes.push(first.shortcode);
+        video_shortcodes.push(first.shortcode.clone());
         let second = client
             .upload_video(media_path("webm.webm"), Some(format!("{title}-second")))
             .await
             .map_err(|error| format!("second remote video upload failed: {error}"))?;
-        video_shortcodes.push(second.shortcode);
+        video_shortcodes.push(second.shortcode.clone());
 
         let created = client
             .create_collection(&video_shortcodes, None)
@@ -2614,8 +2988,8 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             return Err("remote collection details changed ownership or video order".to_string());
         }
 
-        let titled = client
-            .update_collection_title(&created.shortcode, &title)
+        let titled = created
+            .set_title(&title)
             .await
             .map_err(|error| format!("remote collection title update failed: {error}"))?;
         if titled.title.as_deref() != Some(title.as_str()) {
@@ -2623,8 +2997,8 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
         }
 
         let reversed = video_shortcodes.iter().rev().cloned().collect::<Vec<_>>();
-        let reordered = client
-            .replace_collection_videos(&created.shortcode, &reversed)
+        let reordered = titled
+            .replace_videos(&reversed)
             .await
             .map_err(|error| format!("remote collection reorder failed: {error}"))?;
         if reordered
@@ -2636,8 +3010,8 @@ async fn remote_collection_lifecycle_preserves_order_and_member_videos() {
             return Err("remote collection update changed requested video order".to_string());
         }
 
-        client
-            .delete_collection(&created.shortcode)
+        reordered
+            .delete()
             .await
             .map_err(|error| format!("remote collection deletion failed: {error}"))?;
         let count_after_delete = client
@@ -2715,14 +3089,12 @@ async fn unauthenticated_video_analytics_requests_are_bodyless() {
         .await;
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    let summary = client
-        .get_video_analytics("abc123")
+    let video = bound_mock_video(&client, "abc123");
+    let summary = video
+        .analytics()
         .await
         .expect("video analytics should succeed");
-    let live = client
-        .get_video_live_views("abc123")
-        .await
-        .expect("live views should succeed");
+    let live = video.live_views().await.expect("live views should succeed");
 
     assert_eq!(summary.group, "day");
     assert_eq!(summary.plays[0].count, 0);
@@ -2757,16 +3129,18 @@ async fn video_analytics_requests_map_endpoint_and_common_errors() {
         .await;
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
+    let rejected = bound_mock_video(&client, "rejected");
+    let expired = bound_mock_video(&client, "expired");
     let summary_error = expect_streamable_error(
-        client.get_video_analytics("rejected").await,
+        rejected.analytics().await,
         "rejected video analytics should fail",
     );
     let live_error = expect_streamable_error(
-        client.get_video_live_views("rejected").await,
+        rejected.live_views().await,
         "rejected live views should fail",
     );
     let session_error = expect_streamable_error(
-        client.get_video_analytics("expired").await,
+        expired.analytics().await,
         "expired video analytics should fail",
     );
 
@@ -2804,8 +3178,8 @@ async fn remote_video_live_views_can_be_fetched() {
         .await
         .expect("remote video upload should reach transcoding");
 
-    client
-        .get_video_live_views(&video.shortcode)
+    video
+        .live_views()
         .await
         .expect("remote live views should be available");
     drop(client);
@@ -2842,16 +3216,15 @@ async fn unauthenticated_video_privacy_update_and_explicit_refresh_succeed() {
         ..models::VideoPrivacySettingsUpdate::default()
     };
 
-    client
-        .update_video_privacy("abc123", &update)
+    let mut video = bound_mock_video(&client, "abc123");
+    video
+        .update_privacy(&update)
         .await
         .expect("video privacy update should succeed");
-    let video = client
-        .get_video("abc123")
-        .await
-        .expect("video refresh should succeed");
+    video.refresh().await.expect("video refresh should succeed");
     let settings = video
         .privacy_settings
+        .as_ref()
         .expect("refreshed video should include privacy settings");
 
     assert_eq!(settings.visibility, models::Visibility::HiddenOnStreamable);
@@ -2873,7 +3246,7 @@ async fn update_video_privacy_serializes_password_removal_as_null() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
@@ -2883,8 +3256,9 @@ async fn update_video_privacy_serializes_password_removal_as_null() {
         ..models::VideoPrivacySettingsUpdate::default()
     };
 
-    client
-        .update_video_privacy("abc123", &update)
+    let video = bound_mock_video(client.client(), "abc123");
+    video
+        .update_privacy(&update)
         .await
         .expect("password removal should succeed");
 }
@@ -2906,8 +3280,9 @@ async fn reset_video_privacy_sends_bodyless_delete() {
 
     let client = mock_client(&mock_server).expect("mock client should initialize");
 
-    client
-        .reset_video_privacy("abc123")
+    let video = bound_mock_video(&client, "abc123");
+    video
+        .reset_privacy()
         .await
         .expect("video privacy reset should succeed");
 
@@ -2953,7 +3328,7 @@ async fn video_privacy_operations_map_endpoint_and_common_errors() {
         .mount(&mock_server)
         .await;
 
-    let (client, _, _) = mock_client(&mock_server)
+    let client = mock_client(&mock_server)
         .expect("mock client should initialize")
         .register(Some(email.to_string()), Some(password.to_string()), None)
         .await
@@ -2963,16 +3338,18 @@ async fn video_privacy_operations_map_endpoint_and_common_errors() {
         ..models::VideoPrivacySettingsUpdate::default()
     };
 
+    let rejected = bound_mock_video(client.client(), "rejected");
+    let expired = bound_mock_video(client.client(), "expired");
     let update_error = expect_streamable_error(
-        client.update_video_privacy("rejected", &update).await,
+        rejected.update_privacy(&update).await,
         "rejected privacy update should fail",
     );
     let reset_error = expect_streamable_error(
-        client.reset_video_privacy("rejected").await,
+        rejected.reset_privacy().await,
         "rejected privacy reset should fail",
     );
     let session_error = expect_streamable_error(
-        client.update_video_privacy("expired", &update).await,
+        expired.update_privacy(&update).await,
         "expired privacy update should fail",
     );
 
@@ -3005,7 +3382,7 @@ async fn remote_video_privacy_can_be_updated_and_refreshed() {
     let client = remote_authenticated_client()
         .await
         .expect("shared remote account should authenticate");
-    let video = client
+    let mut video = client
         .upload_video(media_path("webm.webm"), None)
         .await
         .expect("remote video upload should reach transcoding");
@@ -3013,14 +3390,15 @@ async fn remote_video_privacy_can_be_updated_and_refreshed() {
         visibility: Some(models::Visibility::Private),
         ..models::VideoPrivacySettingsUpdate::default()
     };
-    let updated_result = client.update_video_privacy(&video.shortcode, &update).await;
-    let refreshed_result = client.get_video(&video.shortcode).await;
+    let updated_result = video.update_privacy(&update).await;
+    let refreshed_result = video.refresh().await;
     drop(client);
     updated_result.expect("remote video privacy update should succeed");
-    let refreshed = refreshed_result.expect("remote updated video refresh should succeed");
+    refreshed_result.expect("remote updated video refresh should succeed");
     assert_eq!(
-        refreshed
+        video
             .privacy_settings
+            .as_ref()
             .expect("remote video should include updated privacy settings")
             .visibility,
         models::Visibility::Private
@@ -3107,7 +3485,7 @@ async fn registration_reports_email_already_in_use() {
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
     let password = generate_random_password();
     #[cfg(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER")]
-    let (_registered_client, _, _) = StreamableClient::new()
+    let _registration = StreamableClient::new()
         .expect("client should initialize")
         .register(Some(email.clone()), Some(password.clone()), None)
         .await
@@ -3282,4 +3660,373 @@ async fn authentication_reports_invalid_sessions() {
     };
 
     assert!(matches!(error, StreamableError::InvalidSession { .. }));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_resource_deletes_after_originating_client_is_dropped() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_string("true"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+    let video = client
+        .get_video("abc123")
+        .await
+        .expect("video lookup should succeed");
+    drop(client);
+
+    video
+        .delete()
+        .await
+        .expect("client-bound video deletion should succeed");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    let delete_request = requests
+        .iter()
+        .find(|request| request.method.as_str() == "DELETE")
+        .expect("delete request should be recorded");
+    assert!(delete_request.body.is_empty());
+    assert!(!delete_request.headers.contains_key("content-type"));
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn video_resource_is_invalidated_by_logout() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let video = client
+        .get_video("abc123")
+        .await
+        .expect("video lookup should succeed");
+    let _client = client.logout();
+
+    let error = video
+        .delete()
+        .await
+        .expect_err("logout should invalidate the video resource");
+    assert!(matches!(error, StreamableError::ResourceInvalidated));
+    assert_eq!(video.shortcode, "abc123");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.method.as_str() == "DELETE")
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn resources_created_after_logout_use_the_new_generation() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_json(mock_video("abc123", false)))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/videos/abc123"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(200).set_body_string("true"))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed")
+        .logout();
+    let video = client
+        .get_video("abc123")
+        .await
+        .expect("post-logout video lookup should succeed");
+
+    video
+        .delete()
+        .await
+        .expect("post-logout resource should remain valid");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn stale_video_operations_fail_before_local_shortcuts() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let mut video = bound_mock_labeled_video(&client, "abc123", &[]);
+    let _client = client.logout();
+
+    let remove_error = video
+        .remove_labels(&[])
+        .await
+        .expect_err("an empty removal must still reject a stale resource");
+    assert!(matches!(remove_error, StreamableError::ResourceInvalidated));
+    let frame_error = video
+        .set_thumbnail_frame(f64::NAN)
+        .await
+        .expect_err("thumbnail validation must not hide stale resources");
+    assert!(matches!(frame_error, StreamableError::ResourceInvalidated));
+    let upload_error = video
+        .upload_thumbnail("missing-thumbnail.png")
+        .await
+        .expect_err("file validation must not hide stale resources");
+    assert!(matches!(upload_error, StreamableError::ResourceInvalidated));
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert_eq!(requests.len(), 1);
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn registration_chains_into_label_resource_with_retained_session() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "name": "temporary" })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "name": "temporary",
+            "id": 174172
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/labels/174172"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let label = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed")
+        .create_label("temporary")
+        .await
+        .expect("label creation should succeed");
+
+    label
+        .delete()
+        .await
+        .expect("client-bound label deletion should succeed");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn label_resource_stays_invalid_after_logout_and_relogin() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    let password = "Password1";
+    mock_registration_with_credentials(&mock_server, email, password).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/labels"))
+        .and(header("cookie", "session=mock-session"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "name": "temporary",
+            "id": 174_173
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/check"))
+        .and(NoCookieHeader)
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("set-cookie", "session=new-session; Path=/; HttpOnly")
+                .set_body_json(authenticated_user(email)),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), Some(password.to_string()), None)
+        .await
+        .expect("registration should succeed");
+    let label = client
+        .create_label("temporary")
+        .await
+        .expect("label creation should succeed");
+    let client = client.logout();
+    let _client = client
+        .login(email.to_string(), password.to_string())
+        .await
+        .expect("login should succeed");
+
+    let error = label
+        .delete()
+        .await
+        .expect_err("a new login must not reactivate an old label");
+    assert!(matches!(error, StreamableError::ResourceInvalidated));
+    assert_eq!(label.name, "temporary");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.method.as_str() == "DELETE")
+    );
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn collection_resource_updates_and_deletes_after_client_is_dropped() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/collections"))
+        .and(NoCookieHeader)
+        .and(body_json(json!({ "shortcodes": ["first"] })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": null,
+            "videos": [{ "shortcode": "first", "title": "First", "plays": 0 }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .and(body_json(json!({ "title": "Highlights" })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": "Highlights",
+            "videos": [{ "shortcode": "first", "title": "First", "plays": 0 }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/collections/shared1"))
+        .and(NoCookieHeader)
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server).expect("mock client should initialize");
+    let shortcodes = vec!["first".to_string()];
+    let collection = client
+        .create_collection(&shortcodes, None)
+        .await
+        .expect("collection creation should succeed");
+    drop(client);
+
+    let collection = collection
+        .set_title("Highlights")
+        .await
+        .expect("client-bound title update should succeed");
+    assert_eq!(collection.title.as_deref(), Some("Highlights"));
+    collection
+        .delete()
+        .await
+        .expect("client-bound collection deletion should succeed");
+}
+
+#[cfg(not(feature = "DANGEROUSLY_SEND_REQUESTS_TO_REMOTE_SERVER"))]
+#[tokio::test]
+async fn anonymous_capable_collection_resource_is_invalidated_by_logout() {
+    let mock_server = MockServer::start().await;
+    let email = "user@example.com";
+    mock_registration(&mock_server, email).await;
+    Mock::given(method("POST"))
+        .and(path("/api/v1/collections"))
+        .and(header("cookie", "session=mock-session"))
+        .and(body_json(json!({ "shortcodes": ["first"] })))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "shortcode": "shared1",
+            "title": null,
+            "videos": [{ "shortcode": "first", "title": "First", "plays": 0 }]
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let client = mock_client(&mock_server)
+        .expect("mock client should initialize")
+        .register(Some(email.to_string()), None, None)
+        .await
+        .expect("registration should succeed");
+    let shortcodes = vec!["first".to_string()];
+    let collection = client
+        .create_collection(&shortcodes, None)
+        .await
+        .expect("collection creation should succeed");
+    let _client = client.logout();
+
+    let error = collection
+        .delete()
+        .await
+        .expect_err("logout should invalidate anonymous-capable collection operations");
+    assert!(matches!(error, StreamableError::ResourceInvalidated));
+    assert_eq!(collection.shortcode(), "shared1");
+
+    let requests = mock_server
+        .received_requests()
+        .await
+        .expect("mock server should record requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|request| request.method.as_str() == "DELETE")
+    );
 }

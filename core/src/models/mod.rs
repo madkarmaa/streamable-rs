@@ -1696,6 +1696,18 @@ pub(crate) struct Fields {
     pub(crate) x_amz_signature: String,
 }
 
+/// A label reference included in video data.
+///
+/// ```
+/// let label = streamable::models::VideoLabel { id: 42 };
+/// assert_eq!(label.id, 42);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoLabel {
+    /// Server-assigned label identifier.
+    pub id: u64,
+}
+
 /// Video data returned by Streamable.
 ///
 /// ```no_run
@@ -1731,6 +1743,9 @@ pub struct Video {
     pub dynamic_thumbnail_url: Option<String>,
     /// Persisted frame offset, or `"-1"` for a custom uploaded image.
     pub thumbnail_offset: Option<String>,
+    /// Labels currently assigned to this video.
+    #[serde(default)]
+    pub labels: Vec<VideoLabel>,
     /// Video privacy, when included.
     #[serde(default)]
     pub privacy_settings: Option<VideoPrivacySettings>,
