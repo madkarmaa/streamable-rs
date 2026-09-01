@@ -46,9 +46,8 @@ Fight scope creep, but do not compress a change into the wrong layer merely to k
 
 ## Before you start
 
-The repository uses a generated repository dump as working context.
-
-If the repository-root `dump/` directory does not exist, run the repository-root `dump.py` before normal project work. Do not regenerate an existing dump merely because it exists unless the current task actually requires a fresh one.
+The repository uses a website dump as working context under `dump/`.
+Run `bun run scripts/dump.js` before normal project work.
 
 ## Browser work
 

@@ -5,12 +5,13 @@
     "private": true,
     "devDependencies": {
         "@types/bun": "^1.4.0",
+        "fflate": "^0.8.3",
         "husky": "^9.1.7",
         "prettier": "3.9.6",
         "typescript": "^6.0.3"
     },
     "scripts": {
-        "prepare": "husky",
+        "prepare": "husky && bun run scripts/dump.js",
         "format": "prettier --write ."
     }
 }
